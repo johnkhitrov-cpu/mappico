@@ -4,7 +4,11 @@
       "Bash(npm run dev:*)",
       "Bash(timeout:*)",
       "Bash(taskkill:*)",
-      "Bash(if exist \".next\\\\dev\\\\lock\" del \".next\\\\dev\\\\lock\")"
+      "Bash(if exist \".next\\\\dev\\\\lock\" del \".next\\\\dev\\\\lock\")",
+      "Bash(npm install:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(dir:*)"
     ]
   }
 }
