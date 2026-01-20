@@ -2,3 +2,10 @@ node_modules
 .next
 .env.local
 .env
+
+/app/generated/prisma
+
+# Database
+*.db
+*.db-journal
+prisma/migrations

@@ -8,7 +8,10 @@
       "Bash(npm install:*)",
       "Bash(tasklist:*)",
       "Bash(findstr:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(npx prisma migrate:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npx prisma studio)"
     ]
   }
 }
