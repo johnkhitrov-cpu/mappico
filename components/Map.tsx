@@ -73,6 +73,74 @@ export default function MapComponent() {
     fetchAllData();
   }, []);
 
+  // Subscribe to SSE for real-time updates
+  useEffect(() => {
+    let eventSource: EventSource | null = null;
+    let retryTimeout: NodeJS.Timeout | null = null;
+
+    const connectSSE = () => {
+      try {
+        const token = localStorage.getItem("token");
+        if (!token) {
+          console.warn("No token found, skipping SSE connection");
+          return;
+        }
+
+        // Note: EventSource doesn't support custom headers in browser
+        // So we pass the token as a query parameter
+        eventSource = new EventSource(`/api/realtime/points?token=${token}`);
+
+        eventSource.addEventListener("connected", (event) => {
+          console.log("SSE connected:", event.data);
+        });
+
+        eventSource.addEventListener("point_created", (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            const newPoint: FriendPoint = data.point;
+
+            // Check if point already exists (avoid duplicates)
+            setFriendPoints((prev) => {
+              const exists = prev.some((p) => p.id === newPoint.id);
+              if (exists) return prev;
+              return [newPoint, ...prev];
+            });
+
+            console.log("New point received via SSE:", newPoint.title);
+          } catch (parseError) {
+            console.error("Failed to parse SSE point_created event:", parseError);
+          }
+        });
+
+        eventSource.onerror = (error) => {
+          console.error("SSE error:", error);
+          eventSource?.close();
+
+          // Retry connection after 2 seconds
+          retryTimeout = setTimeout(() => {
+            console.log("Retrying SSE connection...");
+            connectSSE();
+          }, 2000);
+        };
+      } catch (error) {
+        console.error("Failed to create SSE connection:", error);
+      }
+    };
+
+    // Connect after initial data load
+    const initTimeout = setTimeout(connectSSE, 1000);
+
+    // Cleanup on unmount
+    return () => {
+      if (initTimeout) clearTimeout(initTimeout);
+      if (retryTimeout) clearTimeout(retryTimeout);
+      if (eventSource) {
+        console.log("Closing SSE connection");
+        eventSource.close();
+      }
+    };
+  }, []);
+
   const fetchAllData = async () => {
     setLoading(true);
     setError("");

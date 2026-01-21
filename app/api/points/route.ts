@@ -3,6 +3,7 @@ import { getAuthUser } from '@/lib/apiAuth';
 import { prisma } from '@/lib/prisma';
 import { pointCreateSchema } from '@/lib/validators';
 import { ZodError } from 'zod';
+import { broadcastToUsers } from '@/lib/sseClients';
 
 // GET /api/points - List my points
 export async function GET(request: NextRequest) {
@@ -70,10 +71,69 @@ export async function POST(request: NextRequest) {
         description: true,
         photoUrl: true,
         createdAt: true,
+        user: {
+          select: {
+            email: true,
+          },
+        },
       },
     });
 
-    return NextResponse.json({ point }, { status: 201 });
+    // Broadcast to friends via SSE
+    try {
+      console.log('[POINT CREATE] Current userId =', userId);
+
+      // Find all accepted friends
+      const friendRequests = await prisma.friendRequest.findMany({
+        where: {
+          OR: [
+            { fromUserId: userId, status: 'accepted' },
+            { toUserId: userId, status: 'accepted' },
+          ],
+        },
+        select: {
+          fromUserId: true,
+          toUserId: true,
+        },
+      });
+
+      console.log('[POINT CREATE] Found friend requests:', friendRequests);
+
+      // Extract friend IDs
+      const friendIds = friendRequests.map((req) => {
+        if (req.fromUserId === userId) {
+          return req.toUserId;
+        } else {
+          return req.fromUserId;
+        }
+      });
+
+      console.log('[POINT CREATE] Extracted friend IDs:', friendIds);
+
+      // Broadcast to friends (not to self, as frontend handles local update)
+      if (friendIds.length > 0) {
+        broadcastToUsers(friendIds, 'point_created', {
+          point: {
+            id: point.id,
+            userId: userId,
+            userEmail: point.user.email,
+            lat: point.lat,
+            lng: point.lng,
+            title: point.title,
+            description: point.description,
+            photoUrl: point.photoUrl,
+            createdAt: point.createdAt.toISOString(),
+          },
+        });
+      }
+    } catch (broadcastError) {
+      // Log but don't fail the request
+      console.error('SSE broadcast error:', broadcastError);
+    }
+
+    // Return point without user data (client doesn't expect it)
+    const { user: _user, ...pointWithoutUser } = point;
+    return NextResponse.json({ point: pointWithoutUser }, { status: 201 });
   } catch (error) {
     if (error instanceof ZodError) {
       const message = error.errors && error.errors.length > 0
