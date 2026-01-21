@@ -24,6 +24,7 @@ export async function GET(request: NextRequest) {
         lng: true,
         title: true,
         description: true,
+        photoUrl: true,
         createdAt: true,
       },
     });
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest) {
         lng: validatedData.lng,
         title: validatedData.title,
         description: validatedData.description || null,
+        photoUrl: validatedData.photoUrl || null,
       },
       select: {
         id: true,
@@ -66,6 +68,7 @@ export async function POST(request: NextRequest) {
         lng: true,
         title: true,
         description: true,
+        photoUrl: true,
         createdAt: true,
       },
     });
