@@ -15,10 +15,29 @@ interface Point {
   createdAt: string;
 }
 
+interface FriendPoint {
+  id: string;
+  userId: string;
+  userEmail: string;
+  lat: number;
+  lng: number;
+  title: string;
+  description: string | null;
+  photoUrl: string | null;
+  createdAt: string;
+}
+
+interface Friend {
+  id: string;
+  email: string;
+}
+
 interface ClickedCoords {
   lat: number;
   lng: number;
 }
+
+type SelectedPoint = (Point & { isMine: true }) | (FriendPoint & { isMine: false });
 
 export default function MapComponent() {
   const [viewState, setViewState] = useState({
@@ -27,7 +46,9 @@ export default function MapComponent() {
     zoom: 4,
   });
 
-  const [points, setPoints] = useState<Point[]>([]);
+  const [myPoints, setMyPoints] = useState<Point[]>([]);
+  const [friendPoints, setFriendPoints] = useState<FriendPoint[]>([]);
+  const [friends, setFriends] = useState<Friend[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [clickedCoords, setClickedCoords] = useState<ClickedCoords | null>(null);
@@ -38,31 +59,43 @@ export default function MapComponent() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [selectedPoint, setSelectedPoint] = useState<Point | null>(null);
+  const [selectedPoint, setSelectedPoint] = useState<SelectedPoint | null>(null);
+
+  // Filter state
+  const [showMyPoints, setShowMyPoints] = useState(true);
+  const [showFriendsPoints, setShowFriendsPoints] = useState(true);
+  const [selectedFriendId, setSelectedFriendId] = useState<string>("all");
 
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
-  // Fetch points on mount
+  // Fetch all data on mount
   useEffect(() => {
-    fetchPoints();
+    fetchAllData();
   }, []);
 
-  const fetchPoints = async () => {
+  const fetchAllData = async () => {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/points", {
-        headers: getAuthHeaders(),
-      });
+      const [myPointsRes, friendPointsRes, friendsRes] = await Promise.all([
+        fetch("/api/points", { headers: getAuthHeaders() }),
+        fetch("/api/points/friends", { headers: getAuthHeaders() }),
+        fetch("/api/friends/list", { headers: getAuthHeaders() }),
+      ]);
 
-      if (!response.ok) {
-        throw new Error("Failed to fetch points");
+      if (!myPointsRes.ok || !friendPointsRes.ok || !friendsRes.ok) {
+        throw new Error("Failed to fetch data");
       }
 
-      const data = await response.json();
-      setPoints(data.points);
+      const myPointsData = await myPointsRes.json();
+      const friendPointsData = await friendPointsRes.json();
+      const friendsData = await friendsRes.json();
+
+      setMyPoints(myPointsData.points);
+      setFriendPoints(friendPointsData.points);
+      setFriends(friendsData.friends);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load points");
+      setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
       setLoading(false);
     }
@@ -160,7 +193,7 @@ export default function MapComponent() {
       }
 
       // Add new point to state
-      setPoints([data.point, ...points]);
+      setMyPoints([data.point, ...myPoints]);
 
       // Close modal
       setClickedCoords(null);
@@ -201,6 +234,14 @@ export default function MapComponent() {
     setPreviewUrl(null);
   };
 
+  // Compute visible points based on filters
+  const visibleMyPoints = showMyPoints ? myPoints : [];
+  const visibleFriendPoints = showFriendsPoints
+    ? selectedFriendId === "all"
+      ? friendPoints
+      : friendPoints.filter((p) => p.userId === selectedFriendId)
+    : [];
+
   if (!mapboxToken) {
     return (
       <div className="flex h-full items-center justify-center bg-gray-100">
@@ -225,6 +266,62 @@ export default function MapComponent() {
         </div>
       )}
 
+      {/* Filter Panel */}
+      <div className="absolute top-4 left-4 bg-white rounded-lg shadow-xl p-4 w-64 z-20">
+        <h3 className="text-sm font-bold text-gray-900 mb-3">Filters</h3>
+
+        <div className="space-y-3">
+          {/* Show my points checkbox */}
+          <label className="flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showMyPoints}
+              onChange={(e) => setShowMyPoints(e.target.checked)}
+              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <span className="ml-2 text-sm text-gray-700">Show my points</span>
+          </label>
+
+          {/* Show friends points checkbox */}
+          <label className="flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showFriendsPoints}
+              onChange={(e) => setShowFriendsPoints(e.target.checked)}
+              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <span className="ml-2 text-sm text-gray-700">Show friends points</span>
+          </label>
+
+          {/* Friend selector dropdown */}
+          {showFriendsPoints && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Friend
+              </label>
+              <select
+                value={selectedFriendId}
+                onChange={(e) => setSelectedFriendId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All friends</option>
+                {friends.map((friend) => (
+                  <option key={friend.id} value={friend.id}>
+                    {friend.email}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {/* Stats */}
+        <div className="mt-4 pt-3 border-t border-gray-200 text-xs text-gray-500">
+          <div>My points: {myPoints.length}</div>
+          <div>Friends points: {friendPoints.length}</div>
+        </div>
+      </div>
+
       <Map
         {...viewState}
         onMove={(evt) => setViewState(evt.viewState)}
@@ -235,10 +332,10 @@ export default function MapComponent() {
       >
         <NavigationControl position="top-right" />
 
-        {/* Render markers for all points */}
-        {points.map((point) => (
+        {/* Render markers for my points */}
+        {visibleMyPoints.map((point) => (
           <Marker
-            key={point.id}
+            key={`my-${point.id}`}
             longitude={point.lng}
             latitude={point.lat}
             anchor="bottom"
@@ -248,7 +345,28 @@ export default function MapComponent() {
               title={point.title}
               onClick={(e) => {
                 e.stopPropagation();
-                setSelectedPoint(point);
+                setSelectedPoint({ ...point, isMine: true });
+              }}
+            >
+              📍
+            </div>
+          </Marker>
+        ))}
+
+        {/* Render markers for friends points (different color) */}
+        {visibleFriendPoints.map((point) => (
+          <Marker
+            key={`friend-${point.id}`}
+            longitude={point.lng}
+            latitude={point.lat}
+            anchor="bottom"
+          >
+            <div
+              className="bg-green-600 rounded-full w-6 h-6 flex items-center justify-center text-white text-xs font-bold shadow-lg cursor-pointer hover:bg-green-700"
+              title={`${point.title} (by ${point.userEmail})`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedPoint({ ...point, isMine: false });
               }}
             >
               📍
@@ -272,7 +390,7 @@ export default function MapComponent() {
 
       {/* Add point modal */}
       {clickedCoords && (
-        <div className="absolute top-4 left-4 bg-white rounded-lg shadow-xl p-4 w-80 z-20">
+        <div className="absolute top-20 left-4 bg-white rounded-lg shadow-xl p-4 w-80 z-30">
           <h3 className="text-lg font-bold text-gray-900 mb-3">Add Point</h3>
 
           {saveError && (
@@ -372,6 +490,15 @@ export default function MapComponent() {
               ×
             </button>
           </div>
+
+          {/* Show author for friend points */}
+          {!selectedPoint.isMine && (
+            <div className="mb-3">
+              <p className="text-xs text-gray-500">
+                by: <span className="font-medium text-gray-700">{selectedPoint.userEmail}</span>
+              </p>
+            </div>
+          )}
 
           {selectedPoint.photoUrl && (
             <div className="mb-3">
