@@ -34,6 +34,9 @@ export default function LoginPage() {
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
 
+      // Dispatch custom event to notify Navigation
+      window.dispatchEvent(new Event('authStateChanged'));
+
       router.push("/map");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");

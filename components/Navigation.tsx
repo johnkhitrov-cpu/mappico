@@ -10,14 +10,31 @@ export default function Navigation() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    setIsLoggedIn(!!token);
+    // Check token on mount and pathname change
+    const checkAuth = () => {
+      const token = localStorage.getItem("token");
+      setIsLoggedIn(!!token);
+    };
+
+    checkAuth();
+
+    // Listen for storage events (logout in another tab)
+    window.addEventListener('storage', checkAuth);
+
+    // Listen for custom auth event (login/logout in same tab)
+    window.addEventListener('authStateChanged', checkAuth);
+
+    return () => {
+      window.removeEventListener('storage', checkAuth);
+      window.removeEventListener('authStateChanged', checkAuth);
+    };
   }, [pathname]);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     setIsLoggedIn(false);
+    window.dispatchEvent(new Event('authStateChanged'));
     router.push("/login");
   };
 
