@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { addSSEClient, removeSSEClient } from '@/lib/sseClients';
-import jwt from 'jsonwebtoken';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
+import { verifyToken } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
   // EventSource doesn't support custom headers, so we accept token via query param
@@ -13,13 +11,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Verify JWT token
+  // Verify JWT token using shared auth module
   let userId: string;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const decoded = verifyToken(token);
     userId = decoded.userId;
     console.log('[SSE CONNECT] userId =', userId);
   } catch (error) {
+    // Check if it's a server config error (missing JWT_SECRET)
+    if (error instanceof Error && error.message.includes('JWT_SECRET')) {
+      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+    }
     return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
   }
 
