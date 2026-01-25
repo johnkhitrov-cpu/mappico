@@ -3,7 +3,6 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { loginSchema } from '@/lib/validators';
 import { signToken } from '@/lib/auth';
-import { ZodError } from 'zod';
 import { rateLimit, getClientIp, createRateLimitKey } from '@/lib/rateLimit';
 
 export async function POST(request: NextRequest) {
@@ -76,13 +75,6 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    if (error instanceof ZodError) {
-      return NextResponse.json(
-        { error: error.errors[0].message },
-        { status: 400 }
-      );
-    }
-
     // Handle JWT_SECRET missing error
     if (error instanceof Error && error.message.includes('JWT_SECRET')) {
       console.error('Login error:', error);

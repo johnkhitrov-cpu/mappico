@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/apiAuth';
 import { prisma } from '@/lib/prisma';
 import { pointCreateSchema } from '@/lib/validators';
-import { ZodError } from 'zod';
 import { broadcastToUsers } from '@/lib/sseClients';
 import { rateLimit, createAuthRateLimitKey } from '@/lib/rateLimit';
 
@@ -173,15 +172,6 @@ export async function POST(request: NextRequest) {
     const { user: _user, ...pointWithoutUser } = point;
     return NextResponse.json({ point: pointWithoutUser }, { status: 201 });
   } catch (error) {
-    if (error instanceof ZodError) {
-      const message = error.errors && error.errors.length > 0
-        ? error.errors[0].message
-        : 'Validation error';
-      return NextResponse.json(
-        { error: message },
-        { status: 400 }
-      );
-    }
     console.error('POST /api/points error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },

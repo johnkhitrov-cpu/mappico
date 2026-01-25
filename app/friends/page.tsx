@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { getAuthHeaders } from "@/lib/clientAuth";
+import { useGlobalToast } from "@/components/ClientLayout";
 
 interface Friend {
   id: string;
@@ -16,6 +17,7 @@ interface IncomingRequest {
 }
 
 export default function FriendsPage() {
+  const { success, error: showError } = useGlobalToast();
   const [toEmail, setToEmail] = useState("");
   const [friends, setFriends] = useState<Friend[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<IncomingRequest[]>([]);
@@ -72,10 +74,17 @@ export default function FriendsPage() {
       const data = await response.json();
 
       if (!response.ok) {
+        // Handle rate limiting
+        if (response.status === 429) {
+          showError("Too many friend requests. Please try again later.");
+        } else {
+          showError(data.error || "Failed to send request");
+        }
         throw new Error(data.error || "Failed to send request");
       }
 
       setSuccessMessage("Friend request sent successfully!");
+      success("Friend request sent successfully!");
       setToEmail("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send request");
@@ -101,10 +110,12 @@ export default function FriendsPage() {
       const data = await response.json();
 
       if (!response.ok) {
+        showError(data.error || "Failed to accept request");
         throw new Error(data.error || "Failed to accept request");
       }
 
       setSuccessMessage("Friend request accepted!");
+      success("Friend request accepted!");
       // Refresh data
       fetchData();
     } catch (err) {

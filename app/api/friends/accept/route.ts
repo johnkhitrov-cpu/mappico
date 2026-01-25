@@ -56,15 +56,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      const message = error.errors && error.errors.length > 0
-        ? error.errors[0].message
-        : 'Validation error';
-      return NextResponse.json(
-        { error: message },
-        { status: 400 }
-      );
-    }
     console.error('POST /api/friends/accept error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },

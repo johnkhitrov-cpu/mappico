@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Map, { NavigationControl, Marker } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { getAuthHeaders } from "@/lib/clientAuth";
+import { useGlobalToast } from "./ClientLayout";
 
 interface Point {
   id: string;
@@ -40,6 +41,8 @@ interface ClickedCoords {
 type SelectedPoint = (Point & { isMine: true }) | (FriendPoint & { isMine: false });
 
 export default function MapComponent() {
+  const { success, error: showError } = useGlobalToast();
+
   const [viewState, setViewState] = useState({
     longitude: 15.0,
     latitude: 50.0,
@@ -69,6 +72,10 @@ export default function MapComponent() {
   const [showMyPoints, setShowMyPoints] = useState(true);
   const [showFriendsPoints, setShowFriendsPoints] = useState(true);
   const [selectedFriendId, setSelectedFriendId] = useState<string>("all");
+
+  // Geolocation state
+  const [locatingUser, setLocatingUser] = useState(false);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
 
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
@@ -235,11 +242,11 @@ export default function MapComponent() {
           const uploadData = await uploadResponse.json();
           photoUrl = uploadData.secure_url;
         } catch (uploadErr) {
-          throw new Error(
-            uploadErr instanceof Error
-              ? `Upload failed: ${uploadErr.message}`
-              : "Failed to upload image"
-          );
+          const errorMsg = uploadErr instanceof Error
+            ? `Upload failed: ${uploadErr.message}`
+            : "Failed to upload image";
+          showError(errorMsg);
+          throw new Error(errorMsg);
         } finally {
           setUploading(false);
         }
@@ -264,6 +271,12 @@ export default function MapComponent() {
       const data = await response.json();
 
       if (!response.ok) {
+        // Handle rate limiting
+        if (response.status === 429) {
+          showError("Too many requests. Please try again later.");
+        } else {
+          showError(data.error || "Failed to save point");
+        }
         throw new Error(data.error || "Failed to save point");
       }
 
@@ -276,6 +289,9 @@ export default function MapComponent() {
       setDescription("");
       setSelectedFile(null);
       setPreviewUrl(null);
+
+      // Show success toast
+      success("Point created successfully!");
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save point");
     } finally {
@@ -360,6 +376,7 @@ export default function MapComponent() {
       const data = await response.json();
 
       if (!response.ok) {
+        showError(data.error || "Failed to delete point");
         throw new Error(data.error || "Failed to delete point");
       }
 
@@ -370,12 +387,64 @@ export default function MapComponent() {
       setSelectedPoint(null);
       setShowDeleteConfirm(false);
 
+      // Show success toast
+      success("Point deleted successfully");
       console.log("Point deleted successfully:", selectedPoint.id);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "Failed to delete point");
     } finally {
       setDeleting(false);
     }
+  };
+
+  const handleMyLocation = () => {
+    if (!navigator.geolocation) {
+      showError("Geolocation is not supported by your browser");
+      return;
+    }
+
+    setLocatingUser(true);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+
+        // Center map on user location
+        setViewState({
+          longitude,
+          latitude,
+          zoom: 13,
+        });
+
+        // Set temporary user location marker
+        setUserLocation({ lat: latitude, lng: longitude });
+
+        // Clear the marker after 5 seconds
+        setTimeout(() => {
+          setUserLocation(null);
+        }, 5000);
+
+        setLocatingUser(false);
+      },
+      (error) => {
+        setLocatingUser(false);
+
+        if (error.code === error.PERMISSION_DENIED) {
+          showError("Location access denied. Please enable location permissions.");
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          showError("Location information unavailable.");
+        } else if (error.code === error.TIMEOUT) {
+          showError("Location request timed out.");
+        } else {
+          showError("Failed to get your location.");
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
   };
 
   // Compute visible points based on filters
@@ -385,6 +454,9 @@ export default function MapComponent() {
       ? friendPoints
       : friendPoints.filter((p) => p.userId === selectedFriendId)
     : [];
+
+  // Check if there are any visible points
+  const hasVisiblePoints = visibleMyPoints.length > 0 || visibleFriendPoints.length > 0;
 
   if (!mapboxToken) {
     return (
@@ -407,6 +479,14 @@ export default function MapComponent() {
       {error && (
         <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10 bg-red-50 px-4 py-2 rounded-lg shadow-md">
           <p className="text-sm text-red-600">{error}</p>
+        </div>
+      )}
+
+      {/* Empty state overlay */}
+      {!loading && !hasVisiblePoints && (
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 bg-white/90 backdrop-blur-sm px-8 py-6 rounded-lg shadow-lg text-center max-w-md">
+          <p className="text-lg text-gray-700 mb-2">No points yet</p>
+          <p className="text-sm text-gray-500">Click on the map to add your first point</p>
         </div>
       )}
 
@@ -476,6 +556,28 @@ export default function MapComponent() {
       >
         <NavigationControl position="top-right" />
 
+        {/* My Location button */}
+        <div className="absolute bottom-4 right-4 z-10">
+          <button
+            onClick={handleMyLocation}
+            disabled={locatingUser}
+            className="bg-white hover:bg-gray-100 text-gray-700 rounded-full p-3 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Go to my location"
+          >
+            {locatingUser ? (
+              <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            ) : (
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            )}
+          </button>
+        </div>
+
         {/* Render markers for my points */}
         {visibleMyPoints.map((point) => (
           <Marker
@@ -530,11 +632,25 @@ export default function MapComponent() {
             </div>
           </Marker>
         )}
+
+        {/* User location marker (temporary) */}
+        {userLocation && (
+          <Marker
+            longitude={userLocation.lng}
+            latitude={userLocation.lat}
+            anchor="center"
+          >
+            <div className="relative">
+              <div className="absolute inset-0 bg-blue-500 rounded-full w-4 h-4 animate-ping opacity-75"></div>
+              <div className="bg-blue-500 rounded-full w-4 h-4 border-2 border-white shadow-lg"></div>
+            </div>
+          </Marker>
+        )}
       </Map>
 
       {/* Add point modal */}
       {clickedCoords && (
-        <div className="absolute top-20 left-4 bg-white rounded-lg shadow-xl p-4 w-80 z-30">
+        <div className="absolute top-4 left-4 right-4 md:top-20 md:left-4 md:right-auto bg-white rounded-lg shadow-xl p-4 md:w-80 z-30 max-h-[calc(100vh-2rem)] overflow-y-auto">
           <h3 className="text-lg font-bold text-gray-900 mb-3">Add Point</h3>
 
           {saveError && (
@@ -632,7 +748,7 @@ export default function MapComponent() {
 
       {/* Point details popup */}
       {selectedPoint && (
-        <div className="absolute top-4 right-4 bg-white rounded-lg shadow-xl p-4 w-80 z-20 max-h-[80vh] overflow-y-auto">
+        <div className="absolute top-4 left-4 right-4 md:top-4 md:right-4 md:left-auto bg-white rounded-lg shadow-xl p-4 md:w-80 z-20 max-h-[calc(100vh-2rem)] overflow-y-auto">
           <div className="flex justify-between items-start mb-3">
             <h3 className="text-lg font-bold text-gray-900">{selectedPoint.title}</h3>
             <button

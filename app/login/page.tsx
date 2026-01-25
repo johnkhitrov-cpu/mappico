@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useToast, ToastContainer } from "@/components/Toast";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { toasts, removeToast, success, error: showError } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -28,6 +30,12 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (!response.ok) {
+        // Handle rate limiting with special message
+        if (response.status === 429) {
+          showError("Too many login attempts. Please try again later.");
+        } else {
+          showError(data.error || "Login failed");
+        }
         throw new Error(data.error || "Login failed");
       }
 
@@ -37,7 +45,8 @@ export default function LoginPage() {
       // Dispatch custom event to notify Navigation
       window.dispatchEvent(new Event('authStateChanged'));
 
-      router.push("/map");
+      success("Login successful! Redirecting...");
+      setTimeout(() => router.push("/map"), 500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -47,6 +56,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50">
+      <ToastContainer toasts={toasts} onClose={removeToast} />
       <div className="w-full max-w-md space-y-8 rounded-lg bg-white p-8 shadow-md">
         <div>
           <h2 className="text-center text-3xl font-bold text-gray-900">

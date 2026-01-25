@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
+import { useGlobalToast } from "./ClientLayout";
 
 export default function Navigation() {
   const pathname = usePathname();
   const router = useRouter();
+  const { success } = useGlobalToast();
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
@@ -35,6 +37,7 @@ export default function Navigation() {
     localStorage.removeItem("user");
     setIsLoggedIn(false);
     window.dispatchEvent(new Event('authStateChanged'));
+    success("Logged out successfully");
     router.push("/login");
   };
 

@@ -12,7 +12,8 @@
       "Bash(npx prisma migrate:*)",
       "Bash(npx prisma generate:*)",
       "Bash(npx prisma studio)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(npm run build:*)"
     ]
   }
 }

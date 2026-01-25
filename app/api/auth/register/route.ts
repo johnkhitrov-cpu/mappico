@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { registerSchema } from '@/lib/validators';
-import { ZodError } from 'zod';
 import { rateLimit, getClientIp, createRateLimitKey } from '@/lib/rateLimit';
 
 export async function POST(request: NextRequest) {
@@ -61,13 +60,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true }, { status: 201 });
 
   } catch (error) {
-    if (error instanceof ZodError) {
-      return NextResponse.json(
-        { error: error.errors[0].message },
-        { status: 400 }
-      );
-    }
-
     console.error('Registration error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
