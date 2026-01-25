@@ -3,112 +3,225 @@
 ## Prerequisites
 
 - Railway account (https://railway.app)
-- Cloudinary account with unsigned upload preset configured
-- Git repository with your code
+- GitHub repository with Mappico code
+- Cloudinary account with unsigned upload preset
+- Mapbox account with public token
 
-## 1. Create Railway Project
+---
+
+## Railway Settings (Exact Configuration)
+
+### Build Command
+
+```
+npm run db:migrate:deploy && npm run build
+```
+
+This runs `prisma migrate deploy` then `next build`. The `prisma generate` is already included in the build script.
+
+### Start Command
+
+```
+npm run start
+```
+
+### Watch Paths (optional)
+
+Leave empty or set to default.
+
+---
+
+## Step-by-Step Setup
+
+### 1. Create Railway Project
 
 1. Go to [Railway Dashboard](https://railway.app/dashboard)
 2. Click **New Project** → **Deploy from GitHub repo**
-3. Select your Mappico repository
-4. Railway will auto-detect Next.js and configure the build
+3. Authorize Railway and select your `mappico` repository
+4. Railway creates a Web Service automatically
 
-## 2. Add PostgreSQL Database
+### 2. Add PostgreSQL Plugin
 
-1. In your Railway project, click **New** → **Database** → **Add PostgreSQL**
-2. Railway will automatically provision a PostgreSQL instance
-3. The `DATABASE_URL` will be auto-injected into your service
+1. In your project canvas, click **+ New**
+2. Select **Database** → **Add PostgreSQL**
+3. Click on the Postgres service → **Variables** tab
+4. Copy the `DATABASE_URL` value (or use Railway's variable reference)
 
-## 3. Configure Environment Variables
+### 3. Link Database to Web Service
 
-Go to your service → **Variables** tab and add:
+1. Click on your Web Service
+2. Go to **Variables** tab
+3. Click **Add Variable** → **Add Reference** → Select `DATABASE_URL` from Postgres
+4. This links the database URL automatically
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | Auto-set by Railway Postgres plugin |
-| `JWT_SECRET` | Random secret for JWT signing (min 32 chars). Generate with: `openssl rand -base64 32` |
-| `NEXT_PUBLIC_MAPBOX_TOKEN` | Your Mapbox public access token |
-| `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` | Your Cloudinary cloud name |
-| `NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET` | Cloudinary unsigned upload preset name |
+### 4. Set Environment Variables
 
-### Generate JWT_SECRET
+In your Web Service → **Variables** tab, add these:
 
+| Variable | Value |
+|----------|-------|
+| `DATABASE_URL` | *(Reference from Postgres plugin)* |
+| `JWT_SECRET` | `your-secure-secret-min-32-chars` |
+| `NEXT_PUBLIC_MAPBOX_TOKEN` | `pk.eyJ1Ijoi...` |
+| `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` | `your-cloud-name` |
+| `NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET` | `your-unsigned-preset` |
+
+**Generate JWT_SECRET:**
 ```bash
 openssl rand -base64 32
 ```
 
-Or use any secure random string generator.
+### 5. Configure Build Settings
 
-## 4. Configure Build & Start Commands
+1. Go to Web Service → **Settings** tab
+2. Scroll to **Build & Deploy**
+3. Set:
+   - **Build Command**: `npm run db:migrate:deploy && npm run build`
+   - **Start Command**: `npm run start`
 
-Railway should auto-detect these, but verify in **Settings**:
+### 6. Deploy
 
-- **Build Command**: `npm run build`
-- **Start Command**: `npm run start`
+1. Click **Deploy** or push to your GitHub repo
+2. Watch the build logs for any errors
+3. Wait for deployment to complete (green checkmark)
 
-If using Prisma migrations, set:
+---
 
-- **Build Command**: `npx prisma migrate deploy && npm run build`
+## Cloudinary Unsigned Preset Setup
 
-## 5. Run Database Migrations
+1. Go to [Cloudinary Console](https://console.cloudinary.com/)
+2. Navigate to **Settings** → **Upload**
+3. Scroll to **Upload presets** → Click **Add upload preset**
+4. Configure:
+   - **Preset name**: e.g., `mappico_unsigned`
+   - **Signing Mode**: **Unsigned**
+   - **Folder** (optional): `mappico`
+5. Click **Save**
+6. Use this preset name for `NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET`
 
-For initial deployment or schema changes:
+---
 
-```bash
-# Via Railway CLI
-railway run npx prisma migrate deploy
+## Post-Deploy Checklist
 
-# Or set as build command (recommended)
-npx prisma migrate deploy && npm run build
+After deployment succeeds, verify these endpoints:
+
+### 1. Health Check
+```
+GET https://your-app.railway.app/api/health
+```
+Expected: `{"ok":true,"db":"up"}`
+
+### 2. Register New User
+```
+POST https://your-app.railway.app/api/auth/register
+Content-Type: application/json
+
+{"email":"test@example.com","password":"password123"}
+```
+Expected: `{"token":"eyJ..."}`
+
+### 3. Login
+```
+POST https://your-app.railway.app/api/auth/login
+Content-Type: application/json
+
+{"email":"test@example.com","password":"password123"}
+```
+Expected: `{"token":"eyJ..."}`
+
+### 4. Create Point (with token)
+```
+POST https://your-app.railway.app/api/points
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"lat":55.75,"lng":37.62,"title":"Test Point"}
+```
+Expected: `{"point":{...}}`
+
+### 5. UI Flow Test
+1. Open `https://your-app.railway.app` in browser
+2. Register/Login
+3. Create a point with photo on the map
+4. Refresh page → point persists
+5. Delete point → disappears from map
+
+---
+
+## Common Railway Pitfalls
+
+### Prisma Engine Binary Issues (Windows → Linux)
+
+**Problem**: Prisma generates binaries for your dev machine (Windows). Railway runs Linux.
+
+**Solution**: The `postinstall` script runs `prisma generate` on Railway, which generates Linux binaries. This is already configured in `package.json`.
+
+### Missing DATABASE_URL
+
+**Problem**: Build fails with "Environment variable not found: DATABASE_URL"
+
+**Solution**: Ensure you've linked the Postgres plugin to your web service via variable reference, not copy-paste.
+
+### Migrations Not Running
+
+**Problem**: Tables don't exist, Prisma errors about missing relations.
+
+**Solution**: Ensure build command is:
+```
+npm run db:migrate:deploy && npm run build
 ```
 
-## 6. Cloudinary Setup
+### NEXT_PUBLIC_ Variables Not Available
 
-### Create Unsigned Upload Preset
+**Problem**: Mapbox/Cloudinary not working in browser.
 
-1. Go to Cloudinary Console → Settings → Upload
-2. Click **Add upload preset**
-3. Set **Signing Mode** to **Unsigned**
-4. Configure folder (optional): `mappico`
-5. Save and note the preset name
+**Solution**: `NEXT_PUBLIC_*` vars must be set **before** build. If you add them after, redeploy.
 
-This preset name goes in `NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET`.
+### Cold Starts / Hobby Plan Limits
 
-## 7. Verify Deployment
+**Problem**: App sleeps after inactivity, first request is slow.
 
-After deployment completes:
+**Solution**: This is normal on Railway's free/hobby tier. The `/api/health` endpoint helps wake it up.
 
-1. Check health endpoint: `https://your-app.railway.app/api/health`
-   - Should return: `{ "ok": true, "db": "up" }`
-2. Test user registration and login
-3. Test creating points with photos
+### SSL/Database Connection Errors
 
-## Troubleshooting
+**Problem**: `ECONNREFUSED` or SSL errors connecting to Postgres.
 
-### Database Connection Issues
+**Solution**: Railway's internal `DATABASE_URL` handles SSL automatically. Don't manually add `?sslmode=require` unless needed.
 
-- Verify `DATABASE_URL` is set correctly
-- Check `/api/health` returns `{ "ok": true, "db": "up" }`
-- Run `railway logs` to see error details
+---
 
-### Migration Failures
+## Troubleshooting Commands
 
 ```bash
-# Check migration status
+# Install Railway CLI
+npm install -g @railway/cli
+
+# Login
+railway login
+
+# Link to project
+railway link
+
+# View logs
+railway logs
+
+# Run command in Railway environment
 railway run npx prisma migrate status
+railway run npx prisma db push --force-reset  # DANGER: resets DB
 
-# Reset if needed (CAUTION: data loss)
-railway run npx prisma migrate reset --force
+# Open shell
+railway shell
 ```
 
-### Build Failures
+---
 
-- Ensure all dependencies are in `package.json`
-- Check Node.js version compatibility
-- Review build logs in Railway dashboard
+## Environment Variable Summary
 
-## Custom Domain (Optional)
-
-1. Go to service **Settings** → **Domains**
-2. Click **Generate Domain** or **Add Custom Domain**
-3. For custom domains, configure DNS as instructed
+| Variable | Required | Source |
+|----------|----------|--------|
+| `DATABASE_URL` | Yes | Railway Postgres plugin |
+| `JWT_SECRET` | Yes | Generate yourself |
+| `NEXT_PUBLIC_MAPBOX_TOKEN` | Yes | Mapbox account |
+| `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` | Yes | Cloudinary dashboard |
+| `NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET` | Yes | Cloudinary upload settings |
