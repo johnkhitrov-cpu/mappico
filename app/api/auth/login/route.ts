@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { loginSchema } from '@/lib/validators';
 import { signToken } from '@/lib/auth';
 import { ZodError } from 'zod';
+import { rateLimit, getClientIp, createRateLimitKey } from '@/lib/rateLimit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -11,6 +12,29 @@ export async function POST(request: NextRequest) {
 
     // Validate input
     const validatedData = loginSchema.parse(body);
+
+    // Rate limiting: 10 requests per minute per IP+email
+    const clientIp = getClientIp(request);
+    const rateLimitKey = createRateLimitKey(clientIp, '/api/auth/login', validatedData.email);
+    const rateLimitResult = rateLimit({
+      key: rateLimitKey,
+      limit: 10,
+      windowMs: 60 * 1000, // 1 minute
+    });
+
+    if (!rateLimitResult.ok) {
+      return NextResponse.json(
+        { error: 'Too many login attempts. Try again in a minute.' },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': rateLimitResult.retryAfterSec.toString(),
+            'X-RateLimit-Limit': rateLimitResult.limit.toString(),
+            'X-RateLimit-Remaining': '0',
+          },
+        }
+      );
+    }
 
     // Find user by email
     const user = await prisma.user.findUnique({
@@ -56,6 +80,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: error.errors[0].message },
         { status: 400 }
+      );
+    }
+
+    // Handle JWT_SECRET missing error
+    if (error instanceof Error && error.message.includes('JWT_SECRET')) {
+      console.error('Login error:', error);
+      return NextResponse.json(
+        { error: 'Server misconfigured: JWT_SECRET missing' },
+        { status: 500 }
       );
     }
 

@@ -59,7 +59,11 @@ export default function MapComponent() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [fileValidationError, setFileValidationError] = useState("");
   const [selectedPoint, setSelectedPoint] = useState<SelectedPoint | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Filter state
   const [showMyPoints, setShowMyPoints] = useState(true);
@@ -109,6 +113,20 @@ export default function MapComponent() {
             console.log("New point received via SSE:", newPoint.title);
           } catch (parseError) {
             console.error("Failed to parse SSE point_created event:", parseError);
+          }
+        });
+
+        eventSource.addEventListener("point_deleted", (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            const pointId = data.pointId;
+
+            // Remove point from friend points
+            setFriendPoints((prev) => prev.filter((p) => p.id !== pointId));
+
+            console.log("Point deleted via SSE:", pointId);
+          } catch (parseError) {
+            console.error("Failed to parse SSE point_deleted event:", parseError);
           }
         });
 
@@ -177,6 +195,7 @@ export default function MapComponent() {
     setSaveError("");
     setSelectedFile(null);
     setPreviewUrl(null);
+    setFileValidationError("");
     setSelectedPoint(null);
   };
 
@@ -193,28 +212,15 @@ export default function MapComponent() {
       if (selectedFile) {
         setUploading(true);
         try {
-          // Get signed upload parameters
-          const signResponse = await fetch("/api/upload/sign", {
-            method: "POST",
-            headers: getAuthHeaders(),
-          });
-
-          if (!signResponse.ok) {
-            throw new Error("Failed to get upload signature");
-          }
-
-          const signData = await signResponse.json();
-
-          // Upload to Cloudinary
+          // Upload to Cloudinary using unsigned preset
           const formData = new FormData();
           formData.append("file", selectedFile);
-          formData.append("api_key", signData.apiKey);
-          formData.append("timestamp", signData.timestamp.toString());
-          formData.append("signature", signData.signature);
-          formData.append("folder", signData.folder);
+          formData.append("upload_preset", process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!);
+          formData.append("folder", "mappico");
 
+          const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
           const uploadResponse = await fetch(
-            `https://api.cloudinary.com/v1_1/${signData.cloudName}/image/upload`,
+            `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
             {
               method: "POST",
               body: formData,
@@ -222,7 +228,8 @@ export default function MapComponent() {
           );
 
           if (!uploadResponse.ok) {
-            throw new Error("Failed to upload image");
+            const errorData = await uploadResponse.json();
+            throw new Error(errorData.error?.message || "Failed to upload image");
           }
 
           const uploadData = await uploadResponse.json();
@@ -283,15 +290,50 @@ export default function MapComponent() {
     setSaveError("");
     setSelectedFile(null);
     setPreviewUrl(null);
+    setFileValidationError("");
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      const url = URL.createObjectURL(file);
-      setPreviewUrl(url);
+    if (!file) return;
+
+    // Client-side validation
+    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+    const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+    // Clear previous errors
+    setFileValidationError("");
+
+    // Validate file size
+    if (file.size > MAX_FILE_SIZE) {
+      setFileValidationError("File size exceeds 5MB limit");
+      e.target.value = ""; // Clear input
+      return;
     }
+
+    // Validate file type
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setFileValidationError("Only JPG, PNG, and WEBP images are allowed");
+      e.target.value = ""; // Clear input
+      return;
+    }
+
+    // Validate file extension (extra security)
+    const fileName = file.name.toLowerCase();
+    const hasValidExtension = ['jpg', 'jpeg', 'png', 'webp'].some(ext =>
+      fileName.endsWith(`.${ext}`)
+    );
+
+    if (!hasValidExtension) {
+      setFileValidationError("Only JPG, PNG, and WEBP images are allowed");
+      e.target.value = ""; // Clear input
+      return;
+    }
+
+    // File is valid
+    setSelectedFile(file);
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
   };
 
   const handleRemoveFile = () => {
@@ -300,6 +342,40 @@ export default function MapComponent() {
     }
     setSelectedFile(null);
     setPreviewUrl(null);
+    setFileValidationError("");
+  };
+
+  const handleDeletePoint = async () => {
+    if (!selectedPoint || !selectedPoint.isMine) return;
+
+    setDeleting(true);
+    setDeleteError("");
+
+    try {
+      const response = await fetch(`/api/points/${selectedPoint.id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to delete point");
+      }
+
+      // Remove point from state
+      setMyPoints((prev) => prev.filter((p) => p.id !== selectedPoint.id));
+
+      // Close popup and confirmation dialog
+      setSelectedPoint(null);
+      setShowDeleteConfirm(false);
+
+      console.log("Point deleted successfully:", selectedPoint.id);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete point");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   // Compute visible points based on filters
@@ -502,11 +578,19 @@ export default function MapComponent() {
               </label>
               <input
                 type="file"
-                accept="image/*"
+                accept="image/jpeg,image/png,image/webp"
                 onChange={handleFileChange}
                 disabled={saving || uploading}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
+              <p className="mt-1 text-xs text-gray-500">
+                Only JPG, PNG, WEBP up to 5MB
+              </p>
+              {fileValidationError && (
+                <div className="mt-2 bg-red-50 p-2 rounded">
+                  <p className="text-sm text-red-600">{fileValidationError}</p>
+                </div>
+              )}
               {previewUrl && (
                 <div className="mt-2 relative">
                   <img
@@ -552,7 +636,11 @@ export default function MapComponent() {
           <div className="flex justify-between items-start mb-3">
             <h3 className="text-lg font-bold text-gray-900">{selectedPoint.title}</h3>
             <button
-              onClick={() => setSelectedPoint(null)}
+              onClick={() => {
+                setSelectedPoint(null);
+                setShowDeleteConfirm(false);
+                setDeleteError("");
+              }}
               className="text-gray-400 hover:text-gray-600 text-xl leading-none"
             >
               ×
@@ -586,9 +674,58 @@ export default function MapComponent() {
             </div>
           )}
 
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-gray-500 mb-3">
             {new Date(selectedPoint.createdAt).toLocaleDateString()}
           </div>
+
+          {/* Delete button - only for owned points */}
+          {selectedPoint.isMine && !showDeleteConfirm && (
+            <div>
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={deleting}
+                className="w-full bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium text-sm"
+              >
+                Delete Point
+              </button>
+            </div>
+          )}
+
+          {/* Delete confirmation */}
+          {selectedPoint.isMine && showDeleteConfirm && (
+            <div className="border-t pt-3">
+              <p className="text-sm text-gray-700 mb-3">
+                Are you sure you want to delete this point?
+                {selectedPoint.photoUrl && " The photo will also be deleted from Cloudinary."}
+              </p>
+
+              {deleteError && (
+                <div className="mb-3 bg-red-50 p-2 rounded">
+                  <p className="text-sm text-red-600">{deleteError}</p>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDeletePoint}
+                  disabled={deleting}
+                  className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium text-sm"
+                >
+                  {deleting ? "Deleting..." : "Yes, Delete"}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setDeleteError("");
+                  }}
+                  disabled={deleting}
+                  className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

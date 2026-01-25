@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/apiAuth';
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
+import { rateLimit, createAuthRateLimitKey } from '@/lib/rateLimit';
 
 const requestSchema = z.object({
   toEmail: z.string().email('Invalid email format'),
@@ -15,6 +16,28 @@ export async function POST(request: NextRequest) {
   }
 
   const { userId } = authResult;
+
+  // Rate limiting: 10 requests per minute per user
+  const rateLimitKey = createAuthRateLimitKey(userId, '/api/friends/request');
+  const rateLimitResult = rateLimit({
+    key: rateLimitKey,
+    limit: 10,
+    windowMs: 60 * 1000, // 1 minute
+  });
+
+  if (!rateLimitResult.ok) {
+    return NextResponse.json(
+      { error: 'Too many friend requests. Try again in a minute.' },
+      {
+        status: 429,
+        headers: {
+          'Retry-After': rateLimitResult.retryAfterSec.toString(),
+          'X-RateLimit-Limit': rateLimitResult.limit.toString(),
+          'X-RateLimit-Remaining': '0',
+        },
+      }
+    );
+  }
 
   try {
     const body = await request.json();

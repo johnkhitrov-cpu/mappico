@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { pointCreateSchema } from '@/lib/validators';
 import { ZodError } from 'zod';
 import { broadcastToUsers } from '@/lib/sseClients';
+import { rateLimit, createAuthRateLimitKey } from '@/lib/rateLimit';
 
 // GET /api/points - List my points
 export async function GET(request: NextRequest) {
@@ -50,9 +51,46 @@ export async function POST(request: NextRequest) {
 
   const { userId } = authResult;
 
+  // Rate limiting: 20 requests per minute per user
+  const rateLimitKey = createAuthRateLimitKey(userId, '/api/points');
+  const rateLimitResult = rateLimit({
+    key: rateLimitKey,
+    limit: 20,
+    windowMs: 60 * 1000, // 1 minute
+  });
+
+  if (!rateLimitResult.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests. Try again in a minute.' },
+      {
+        status: 429,
+        headers: {
+          'Retry-After': rateLimitResult.retryAfterSec.toString(),
+          'X-RateLimit-Limit': rateLimitResult.limit.toString(),
+          'X-RateLimit-Remaining': '0',
+        },
+      }
+    );
+  }
+
   try {
     const body = await request.json();
     const validatedData = pointCreateSchema.parse(body);
+
+    // Validate photoUrl if provided (must be from our Cloudinary)
+    if (validatedData.photoUrl) {
+      const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || process.env.CLOUDINARY_CLOUD_NAME;
+      const isValidCloudinaryUrl =
+        validatedData.photoUrl.startsWith(`https://res.cloudinary.com/${cloudName}/`) ||
+        validatedData.photoUrl.startsWith(`http://res.cloudinary.com/${cloudName}/`);
+
+      if (!isValidCloudinaryUrl) {
+        return NextResponse.json(
+          { error: 'Invalid image URL. Only Cloudinary URLs from this application are allowed.' },
+          { status: 400 }
+        );
+      }
+    }
 
     const point = await prisma.point.create({
       data: {

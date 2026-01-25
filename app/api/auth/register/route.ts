@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { registerSchema } from '@/lib/validators';
 import { ZodError } from 'zod';
+import { rateLimit, getClientIp, createRateLimitKey } from '@/lib/rateLimit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,6 +11,29 @@ export async function POST(request: NextRequest) {
 
     // Validate input
     const validatedData = registerSchema.parse(body);
+
+    // Rate limiting: 5 requests per minute per IP+email
+    const clientIp = getClientIp(request);
+    const rateLimitKey = createRateLimitKey(clientIp, '/api/auth/register', validatedData.email);
+    const rateLimitResult = rateLimit({
+      key: rateLimitKey,
+      limit: 5,
+      windowMs: 60 * 1000, // 1 minute
+    });
+
+    if (!rateLimitResult.ok) {
+      return NextResponse.json(
+        { error: 'Too many registration attempts. Try again in a minute.' },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': rateLimitResult.retryAfterSec.toString(),
+            'X-RateLimit-Limit': rateLimitResult.limit.toString(),
+            'X-RateLimit-Remaining': '0',
+          },
+        }
+      );
+    }
 
     // Check if user already exists
     const existingUser = await prisma.user.findUnique({

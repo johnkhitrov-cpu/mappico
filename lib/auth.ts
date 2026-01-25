@@ -1,9 +1,10 @@
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || '';
+const JWT_SECRET = process.env.JWT_SECRET;
 
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET is not defined in environment variables');
+if (!JWT_SECRET || JWT_SECRET.trim() === '') {
+  console.error('[AUTH] FATAL: JWT_SECRET is not set in environment variables');
+  throw new Error('Server misconfigured: JWT_SECRET is required for authentication');
 }
 
 export interface TokenPayload {
