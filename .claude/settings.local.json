@@ -14,7 +14,22 @@
       "Bash(npx prisma studio)",
       "Bash(curl:*)",
       "Bash(npm run build:*)",
-      "Bash(set \"JWT_SECRET=\")"
+      "Bash(set \"JWT_SECRET=\")",
+      "Bash(brew install:*)",
+      "Bash(echo:*)",
+      "Bash(docker:*)",
+      "Bash(bash)",
+      "Bash(export PATH=\"$HOME/.local/node/bin:$PATH\")",
+      "Bash(node --version:*)",
+      "Bash(npm:*)",
+      "Bash(unzip:*)",
+      "Bash(export PATH=\"$HOME/.local/postgres/pgsql/bin:$HOME/.local/node/bin:$PATH\")",
+      "Bash(initdb:*)",
+      "Bash(createdb:*)",
+      "Bash(bash:*)",
+      "Bash(source:*)",
+      "Bash(env:*)",
+      "Bash(mdfind:*)"
     ]
   }
 }

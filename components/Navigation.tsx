@@ -46,6 +46,7 @@ export default function Navigation() {
         { href: "/", label: "Home" },
         { href: "/map", label: "Map" },
         { href: "/friends", label: "Friends" },
+        { href: "/trips", label: "Trips" },
       ]
     : [
         { href: "/", label: "Home" },

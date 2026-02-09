@@ -18,6 +18,34 @@ export const pointCreateSchema = z.object({
   photoUrl: z.string().url('Photo URL must be a valid URL').optional(),
 });
 
+export const tripCreateSchema = z.object({
+  title: z.string()
+    .min(1, 'Title is required')
+    .max(120, 'Title must be at most 120 characters'),
+  description: z.string()
+    .max(1000, 'Description must be at most 1000 characters')
+    .optional(),
+  visibility: z.enum(['PRIVATE', 'FRIENDS'], {
+    errorMap: () => ({ message: 'Visibility must be PRIVATE or FRIENDS' })
+  }).default('PRIVATE'),
+});
+
+export const tripUpdateSchema = z.object({
+  title: z.string()
+    .min(1, 'Title is required')
+    .max(120, 'Title must be at most 120 characters')
+    .optional(),
+  description: z.string()
+    .max(1000, 'Description must be at most 1000 characters')
+    .optional()
+    .nullable(),
+  visibility: z.enum(['PRIVATE', 'FRIENDS'], {
+    errorMap: () => ({ message: 'Visibility must be PRIVATE or FRIENDS' })
+  }).optional(),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type PointCreateInput = z.infer<typeof pointCreateSchema>;
+export type TripCreateInput = z.infer<typeof tripCreateSchema>;
+export type TripUpdateInput = z.infer<typeof tripUpdateSchema>;
