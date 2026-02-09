@@ -31,7 +31,12 @@
       "Bash(env:*)",
       "Bash(mdfind:*)",
       "Bash(git add:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix TypeScript error in Zod enum validation\n\nRemove errorMap from z.enum\\(\\) calls as it''s not supported in current Zod version.\nThis fixes Railway deployment build failure.\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix TypeScript error in Zod enum validation\n\nRemove errorMap from z.enum\\(\\) calls as it''s not supported in current Zod version.\nThis fixes Railway deployment build failure.\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(npx prisma db push:*)",
+      "Bash(lsof:*)",
+      "Bash(kill:*)",
+      "Bash(pkill:*)",
+      "Bash(xargs kill:*)"
     ]
   }
 }

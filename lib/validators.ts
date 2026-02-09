@@ -40,8 +40,26 @@ export const tripUpdateSchema = z.object({
   visibility: z.enum(['PRIVATE', 'FRIENDS']).optional(),
 });
 
+export const tripPointAddSchema = z.object({
+  pointId: z.string().min(1, 'Point ID is required'),
+  order: z.number().int().min(0).default(0).optional(),
+  note: z.string()
+    .max(500, 'Note must be at most 500 characters')
+    .optional(),
+});
+
+export const tripPointUpdateSchema = z.object({
+  order: z.number().int().min(0).optional(),
+  note: z.string()
+    .max(500, 'Note must be at most 500 characters')
+    .optional()
+    .nullable(),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type PointCreateInput = z.infer<typeof pointCreateSchema>;
 export type TripCreateInput = z.infer<typeof tripCreateSchema>;
 export type TripUpdateInput = z.infer<typeof tripUpdateSchema>;
+export type TripPointAddInput = z.infer<typeof tripPointAddSchema>;
+export type TripPointUpdateInput = z.infer<typeof tripPointUpdateSchema>;

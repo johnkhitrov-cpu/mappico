@@ -32,7 +32,8 @@ model Point {
   photoUrl    String?
   createdAt   DateTime @default(now())
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tripPoints  TripPoint[]
 
   @@index([userId])
 }
@@ -61,7 +62,24 @@ model Trip {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner       User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  tripPoints  TripPoint[]
 
   @@index([ownerId])
+}
+
+model TripPoint {
+  id        String   @id @default(cuid())
+  tripId    String
+  pointId   String
+  order     Int      @default(0)
+  note      String?
+  createdAt DateTime @default(now())
+
+  trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  point     Point    @relation(fields: [pointId], references: [id], onDelete: Cascade)
+
+  @@unique([tripId, pointId])
+  @@index([tripId])
+  @@index([pointId])
 }

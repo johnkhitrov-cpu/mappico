@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import AuthGuard from "@/components/AuthGuard";
 import { getAuthHeaders } from "@/lib/clientAuth";
 import { useGlobalToast } from "@/components/ClientLayout";
+import Map, { Marker } from "react-map-gl/mapbox";
+import "mapbox-gl/dist/mapbox-gl.css";
 
 interface Trip {
   id: string;
@@ -13,6 +15,26 @@ interface Trip {
   visibility: string;
   createdAt: string;
   updatedAt: string;
+}
+
+interface Point {
+  id: string;
+  lat: number;
+  lng: number;
+  title: string;
+  description: string | null;
+  photoUrl: string | null;
+  createdAt: string;
+}
+
+interface TripPoint {
+  id: string;
+  tripId: string;
+  pointId: string;
+  order: number;
+  note: string | null;
+  createdAt: string;
+  point: Point;
 }
 
 export default function TripDetailPage() {
@@ -31,8 +53,25 @@ export default function TripDetailPage() {
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<"PRIVATE" | "FRIENDS">("PRIVATE");
 
+  // Trip points state
+  const [tripPoints, setTripPoints] = useState<TripPoint[]>([]);
+  const [pointsLoading, setPointsLoading] = useState(false);
+  const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
+  const [removingPointId, setRemovingPointId] = useState<string | null>(null);
+
+  // Map state
+  const [viewState, setViewState] = useState({
+    longitude: 15.0,
+    latitude: 50.0,
+    zoom: 4,
+  });
+  const mapRef = useRef<any>(null);
+
+  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+
   useEffect(() => {
     fetchTrip();
+    fetchTripPoints();
   }, [tripId]);
 
   const fetchTrip = async () => {
@@ -65,6 +104,34 @@ export default function TripDetailPage() {
       showError(err instanceof Error ? err.message : "Failed to load trip");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchTripPoints = async () => {
+    setPointsLoading(true);
+    try {
+      const response = await fetch(`/api/trips/${tripId}/points`, {
+        headers: getAuthHeaders(),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setTripPoints(data.tripPoints || []);
+
+        // Auto-center map on first point if available
+        if (data.tripPoints && data.tripPoints.length > 0) {
+          const firstPoint = data.tripPoints[0].point;
+          setViewState({
+            longitude: firstPoint.lng,
+            latitude: firstPoint.lat,
+            zoom: 10,
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch trip points:", err);
+    } finally {
+      setPointsLoading(false);
     }
   };
 
@@ -133,13 +200,59 @@ export default function TripDetailPage() {
     }
   };
 
+  const handleRemoveFromTrip = async (pointId: string) => {
+    if (!confirm("Remove this point from the trip? The point itself will not be deleted.")) {
+      return;
+    }
+
+    setRemovingPointId(pointId);
+
+    try {
+      const response = await fetch(`/api/trips/${tripId}/points/${pointId}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        showError(data.error || "Failed to remove point from trip");
+        throw new Error(data.error);
+      }
+
+      // Remove from local state
+      setTripPoints(tripPoints.filter((tp) => tp.pointId !== pointId));
+
+      // Clear selection if this point was selected
+      if (selectedPointId === pointId) {
+        setSelectedPointId(null);
+      }
+
+      success("Point removed from trip!");
+    } catch (err) {
+      console.error("Remove point from trip error:", err);
+    } finally {
+      setRemovingPointId(null);
+    }
+  };
+
+  const handlePointClick = (pointId: string, lat: number, lng: number) => {
+    setSelectedPointId(pointId);
+
+    // Center map on clicked point
+    if (mapRef.current) {
+      mapRef.current.flyTo({
+        center: [lng, lat],
+        zoom: 12,
+        duration: 1000,
+      });
+    }
+  };
+
   if (loading) {
     return (
       <AuthGuard>
-        <div className="min-h-screen bg-gray-50 py-8">
-          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <p className="text-gray-600 text-center py-4">Loading...</p>
-          </div>
+        <div className="h-screen bg-gray-50 flex items-center justify-center">
+          <p className="text-gray-600 text-center py-4">Loading trip...</p>
         </div>
       </AuthGuard>
     );
@@ -151,68 +264,125 @@ export default function TripDetailPage() {
 
   return (
     <AuthGuard>
-      <div className="min-h-screen bg-gray-50 py-8">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <button
-            onClick={() => router.push("/trips")}
-            className="mb-4 text-blue-600 hover:text-blue-700 font-medium"
-          >
-            ← Back to Trips
-          </button>
-
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex justify-between items-start mb-6">
-              <h1 className="text-3xl font-bold text-gray-900">
-                {trip.title}
-              </h1>
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium"
-              >
-                {deleting ? "Deleting..." : "Delete Trip"}
-              </button>
+      <div className="h-[calc(100vh-4rem)] flex">
+        {/* Left Sidebar - Trip Info & Points List */}
+        <div className="w-[450px] bg-white border-r overflow-y-auto">
+          {/* Header */}
+          <div className="p-4 border-b bg-gray-50 sticky top-0 z-10">
+            <button
+              onClick={() => router.push("/trips")}
+              className="text-blue-600 hover:text-blue-700 font-medium text-sm mb-2"
+            >
+              ← Back to Trips
+            </button>
+            <h1 className="text-2xl font-bold text-gray-900 mb-1">
+              {trip.title}
+            </h1>
+            <p className="text-sm text-gray-600">
+              {trip.description || "No description"}
+            </p>
+            <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
+              <span>
+                {trip.visibility === "PRIVATE" ? "🔒 Private" : "👥 Friends"}
+              </span>
+              <span>
+                {tripPoints.length} {tripPoints.length === 1 ? "point" : "points"}
+              </span>
             </div>
+          </div>
 
-            <div className="space-y-4 mb-6">
-              <div>
-                <p className="text-sm text-gray-500">Description</p>
-                <p className="text-gray-900 mt-1">
-                  {trip.description || "(No description)"}
+          {/* Points List */}
+          <div className="p-4">
+            <h2 className="text-lg font-semibold text-gray-900 mb-3">
+              Points in this Trip
+            </h2>
+
+            {pointsLoading ? (
+              <p className="text-sm text-gray-500 text-center py-8">
+                Loading points...
+              </p>
+            ) : tripPoints.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-gray-500 mb-2">No points in this trip yet.</p>
+                <p className="text-sm text-gray-400">
+                  Go to{" "}
+                  <a href="/map" className="text-blue-600 hover:underline">
+                    /map
+                  </a>{" "}
+                  and create points with this trip selected.
                 </p>
               </div>
+            ) : (
+              <div className="space-y-3">
+                {tripPoints.map((tp) => (
+                  <div
+                    key={tp.id}
+                    onClick={() => handlePointClick(tp.pointId, tp.point.lat, tp.point.lng)}
+                    className={`border rounded-lg p-3 cursor-pointer transition-all ${
+                      selectedPointId === tp.pointId
+                        ? "border-blue-500 bg-blue-50 shadow-md"
+                        : "border-gray-200 hover:border-gray-300 hover:shadow-sm"
+                    }`}
+                  >
+                    <div className="flex gap-3">
+                      {/* Thumbnail */}
+                      {tp.point.photoUrl ? (
+                        <img
+                          src={tp.point.photoUrl}
+                          alt={tp.point.title}
+                          className="w-16 h-16 object-cover rounded flex-shrink-0"
+                        />
+                      ) : (
+                        <div className="w-16 h-16 bg-gray-200 rounded flex-shrink-0 flex items-center justify-center">
+                          <span className="text-gray-400 text-xs">No photo</span>
+                        </div>
+                      )}
 
-              <div>
-                <p className="text-sm text-gray-500">Visibility</p>
-                <p className="text-gray-900 mt-1">
-                  {trip.visibility === "PRIVATE" ? "🔒 Private" : "👥 Friends"}
-                </p>
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-gray-900 truncate">
+                          {tp.point.title}
+                        </h3>
+                        {tp.point.description && (
+                          <p className="text-sm text-gray-600 line-clamp-2 mt-1">
+                            {tp.point.description}
+                          </p>
+                        )}
+                        {tp.note && (
+                          <p className="text-xs text-blue-600 mt-1 italic">
+                            Note: {tp.note}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Remove button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemoveFromTrip(tp.pointId);
+                      }}
+                      disabled={removingPointId === tp.pointId}
+                      className="mt-2 w-full px-3 py-1 text-sm bg-red-50 text-red-600 rounded hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {removingPointId === tp.pointId
+                        ? "Removing..."
+                        : "Remove from trip"}
+                    </button>
+                  </div>
+                ))}
               </div>
+            )}
+          </div>
 
-              <div className="flex gap-6">
-                <div>
-                  <p className="text-sm text-gray-500">Created</p>
-                  <p className="text-gray-900 mt-1">
-                    {new Date(trip.createdAt).toLocaleString()}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Last Updated</p>
-                  <p className="text-gray-900 mt-1">
-                    {new Date(trip.updatedAt).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-            </div>
+          {/* Edit Section (Collapsible) */}
+          <div className="p-4 border-t mt-4">
+            <details className="group">
+              <summary className="cursor-pointer text-lg font-semibold text-gray-900 mb-3">
+                Edit Trip Info
+              </summary>
 
-            <hr className="my-6" />
-
-            {/* Edit form */}
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                Edit Trip
-              </h2>
-              <form onSubmit={handleUpdate} className="space-y-4">
+              <form onSubmit={handleUpdate} className="space-y-4 mt-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Title <span className="text-red-500">*</span>
@@ -239,7 +409,7 @@ export default function TripDetailPage() {
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     maxLength={1000}
-                    rows={4}
+                    rows={3}
                     disabled={editing}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -254,7 +424,9 @@ export default function TripDetailPage() {
                   </label>
                   <select
                     value={visibility}
-                    onChange={(e) => setVisibility(e.target.value as "PRIVATE" | "FRIENDS")}
+                    onChange={(e) =>
+                      setVisibility(e.target.value as "PRIVATE" | "FRIENDS")
+                    }
                     disabled={editing}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
@@ -266,13 +438,89 @@ export default function TripDetailPage() {
                 <button
                   type="submit"
                   disabled={editing || !title.trim()}
-                  className="w-full px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed font-medium"
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed font-medium"
                 >
                   {editing ? "Saving..." : "Save Changes"}
                 </button>
+
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium"
+                >
+                  {deleting ? "Deleting..." : "Delete Trip"}
+                </button>
               </form>
-            </div>
+            </details>
           </div>
+        </div>
+
+        {/* Right Side - Map */}
+        <div className="flex-1 relative">
+          {!mapboxToken ? (
+            <div className="h-full flex items-center justify-center bg-gray-100">
+              <p className="text-gray-500">Mapbox token not configured</p>
+            </div>
+          ) : (
+            <Map
+              ref={mapRef}
+              {...viewState}
+              onMove={(evt) => setViewState(evt.viewState)}
+              mapStyle="mapbox://styles/mapbox/streets-v12"
+              mapboxAccessToken={mapboxToken}
+              style={{ width: "100%", height: "100%" }}
+            >
+              {tripPoints.map((tp) => (
+                <Marker
+                  key={tp.id}
+                  longitude={tp.point.lng}
+                  latitude={tp.point.lat}
+                  anchor="bottom"
+                  onClick={(e) => {
+                    e.originalEvent.stopPropagation();
+                    handlePointClick(tp.pointId, tp.point.lat, tp.point.lng);
+                  }}
+                >
+                  <div
+                    className={`cursor-pointer transition-transform ${
+                      selectedPointId === tp.pointId
+                        ? "scale-125"
+                        : "hover:scale-110"
+                    }`}
+                  >
+                    <svg
+                      width="30"
+                      height="40"
+                      viewBox="0 0 30 40"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        d="M15 0C6.716 0 0 6.716 0 15c0 11.25 15 25 15 25s15-13.75 15-25c0-8.284-6.716-15-15-15z"
+                        fill={
+                          selectedPointId === tp.pointId ? "#2563eb" : "#3b82f6"
+                        }
+                      />
+                      <circle cx="15" cy="15" r="5" fill="white" />
+                    </svg>
+                  </div>
+                </Marker>
+              ))}
+            </Map>
+          )}
+
+          {/* Map overlay info */}
+          {tripPoints.length > 0 && (
+            <div className="absolute top-4 left-4 bg-white rounded-lg shadow-lg px-4 py-2">
+              <p className="text-sm font-medium text-gray-900">
+                Showing {tripPoints.length} point{tripPoints.length !== 1 ? "s" : ""}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                Click markers or list items to highlight
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </AuthGuard>

@@ -33,6 +33,15 @@ interface Friend {
   email: string;
 }
 
+interface Trip {
+  id: string;
+  title: string;
+  description: string | null;
+  visibility: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface ClickedCoords {
   lat: number;
   lng: number;
@@ -52,11 +61,14 @@ export default function MapComponent() {
   const [myPoints, setMyPoints] = useState<Point[]>([]);
   const [friendPoints, setFriendPoints] = useState<FriendPoint[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
+  const [trips, setTrips] = useState<Trip[]>([]);
+  const [tripsLoading, setTripsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [clickedCoords, setClickedCoords] = useState<ClickedCoords | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -82,7 +94,24 @@ export default function MapComponent() {
   // Fetch all data on mount
   useEffect(() => {
     fetchAllData();
+    fetchTrips();
   }, []);
+
+  // Fetch trips for dropdown
+  const fetchTrips = async () => {
+    setTripsLoading(true);
+    try {
+      const response = await fetch("/api/trips", { headers: getAuthHeaders() });
+      if (response.ok) {
+        const data = await response.json();
+        setTrips(data.trips || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch trips:", err);
+    } finally {
+      setTripsLoading(false);
+    }
+  };
 
   // Subscribe to SSE for real-time updates
   useEffect(() => {
@@ -199,6 +228,7 @@ export default function MapComponent() {
     setClickedCoords({ lat: lngLat.lat, lng: lngLat.lng });
     setTitle("");
     setDescription("");
+    setSelectedTripId(null);
     setSaveError("");
     setSelectedFile(null);
     setPreviewUrl(null);
@@ -283,15 +313,43 @@ export default function MapComponent() {
       // Add new point to state
       setMyPoints([data.point, ...myPoints]);
 
+      // If trip selected, attach point to trip
+      if (selectedTripId) {
+        try {
+          const tripResponse = await fetch(`/api/trips/${selectedTripId}/points`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...getAuthHeaders(),
+            },
+            body: JSON.stringify({
+              pointId: data.point.id,
+            }),
+          });
+
+          if (!tripResponse.ok) {
+            // Point created but trip attach failed
+            showError("Point created, but could not be added to trip");
+          } else {
+            // Both succeeded
+            success("Point created and added to trip!");
+          }
+        } catch (tripErr) {
+          // Point created but trip attach failed
+          showError("Point created, but could not be added to trip");
+        }
+      } else {
+        // No trip selected
+        success("Point created successfully!");
+      }
+
       // Close modal
       setClickedCoords(null);
       setTitle("");
       setDescription("");
+      setSelectedTripId(null);
       setSelectedFile(null);
       setPreviewUrl(null);
-
-      // Show success toast
-      success("Point created successfully!");
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save point");
     } finally {
@@ -303,6 +361,7 @@ export default function MapComponent() {
     setClickedCoords(null);
     setTitle("");
     setDescription("");
+    setSelectedTripId(null);
     setSaveError("");
     setSelectedFile(null);
     setPreviewUrl(null);
@@ -686,6 +745,33 @@ export default function MapComponent() {
                 rows={3}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Trip (optional)
+              </label>
+              {tripsLoading ? (
+                <p className="text-sm text-gray-500">Loading trips...</p>
+              ) : trips.length === 0 ? (
+                <p className="text-sm text-gray-500">
+                  Create a trip first in <a href="/trips" className="text-blue-600 hover:underline">/trips</a>
+                </p>
+              ) : (
+                <select
+                  value={selectedTripId || ""}
+                  onChange={(e) => setSelectedTripId(e.target.value || null)}
+                  disabled={saving || uploading}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">None</option>
+                  {trips.map((trip) => (
+                    <option key={trip.id} value={trip.id}>
+                      {trip.title}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div>
