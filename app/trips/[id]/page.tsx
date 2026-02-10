@@ -8,6 +8,7 @@ import { useGlobalToast } from "@/components/ClientLayout";
 import Map, { Marker } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import PointDetailsModal from "@/components/PointDetailsModal";
+import { TripDetailHeaderSkeleton, PointCardSkeleton, MapSkeleton } from "@/components/Skeleton";
 
 interface Trip {
   id: string;
@@ -213,7 +214,7 @@ export default function TripDetailPage() {
   };
 
   const handleRemoveFromTrip = async (pointId: string) => {
-    if (!confirm("Remove this point from the trip? The point itself will not be deleted.")) {
+    if (!confirm("Remove this point from the trip?\n\nThe point will remain in your collection and on the map.")) {
       return;
     }
 
@@ -292,8 +293,26 @@ export default function TripDetailPage() {
   if (loading) {
     return (
       <AuthGuard>
-        <div className="h-screen bg-gray-50 flex items-center justify-center">
-          <p className="text-gray-600 text-center py-4">Loading trip...</p>
+        <div className="h-[calc(100vh-4rem)] flex flex-col md:flex-row">
+          {/* Left Sidebar Skeleton */}
+          <div className="w-full md:w-[450px] bg-white border-r overflow-y-auto">
+            <TripDetailHeaderSkeleton />
+
+            {/* Points List Skeleton */}
+            <div className="p-4">
+              <div className="h-6 bg-gray-300 rounded w-1/3 mb-3"></div>
+              <div className="space-y-3">
+                <PointCardSkeleton />
+                <PointCardSkeleton />
+                <PointCardSkeleton />
+              </div>
+            </div>
+          </div>
+
+          {/* Map Skeleton */}
+          <div className="flex-1 relative h-64 md:h-auto">
+            <MapSkeleton />
+          </div>
         </div>
       </AuthGuard>
     );
@@ -305,9 +324,9 @@ export default function TripDetailPage() {
 
   return (
     <AuthGuard>
-      <div className="h-[calc(100vh-4rem)] flex">
+      <div className="h-[calc(100vh-4rem)] flex flex-col md:flex-row">
         {/* Left Sidebar - Trip Info & Points List */}
-        <div className="w-[450px] bg-white border-r overflow-y-auto">
+        <div className="w-full md:w-[450px] bg-white md:border-r overflow-y-auto order-2 md:order-1">
           {/* Header */}
           <div className="p-4 border-b bg-gray-50 sticky top-0 z-10">
             <button
@@ -354,9 +373,10 @@ export default function TripDetailPage() {
             </h2>
 
             {pointsLoading ? (
-              <p className="text-sm text-gray-500 text-center py-8">
-                Loading points...
-              </p>
+              <div className="space-y-3">
+                <PointCardSkeleton />
+                <PointCardSkeleton />
+              </div>
             ) : tripPoints.length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-gray-500 mb-2">
@@ -430,11 +450,11 @@ export default function TripDetailPage() {
                           handleRemoveFromTrip(tp.pointId);
                         }}
                         disabled={removingPointId === tp.pointId}
-                        className="mt-2 w-full px-3 py-1 text-sm bg-red-50 text-red-600 rounded hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="mt-2 w-full px-3 py-2 min-h-[44px] text-sm bg-red-50 text-red-600 rounded hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {removingPointId === tp.pointId
                           ? "Removing..."
-                          : "Remove from trip"}
+                          : "Remove from this trip"}
                       </button>
                     )}
                   </div>
@@ -463,7 +483,7 @@ export default function TripDetailPage() {
                   <button
                     onClick={handleCopyShareLink}
                     disabled={generatingShareLink}
-                    className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-green-400 disabled:cursor-not-allowed font-medium"
+                    className="w-full px-4 py-2 min-h-[44px] bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-green-400 disabled:cursor-not-allowed font-medium"
                   >
                     {generatingShareLink ? "Generating..." : "Copy share link"}
                   </button>
@@ -548,7 +568,7 @@ export default function TripDetailPage() {
                 <button
                   type="submit"
                   disabled={editing || !title.trim()}
-                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed font-medium"
+                  className="w-full px-4 py-2 min-h-[44px] bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed font-medium"
                 >
                   {editing ? "Saving..." : "Save Changes"}
                 </button>
@@ -557,7 +577,7 @@ export default function TripDetailPage() {
                   type="button"
                   onClick={handleDelete}
                   disabled={deleting}
-                  className="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium"
+                  className="w-full px-4 py-2 min-h-[44px] bg-red-600 text-white rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium"
                 >
                   {deleting ? "Deleting..." : "Delete Trip"}
                 </button>
@@ -568,7 +588,7 @@ export default function TripDetailPage() {
         </div>
 
         {/* Right Side - Map */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative h-64 md:h-auto order-1 md:order-2">
           {!mapboxToken ? (
             <div className="h-full flex items-center justify-center bg-gray-100">
               <p className="text-gray-500">Mapbox token not configured</p>

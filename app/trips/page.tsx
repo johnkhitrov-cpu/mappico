@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import AuthGuard from "@/components/AuthGuard";
 import { getAuthHeaders } from "@/lib/clientAuth";
 import { useGlobalToast } from "@/components/ClientLayout";
+import { TripCardSkeleton } from "@/components/Skeleton";
 
 interface Trip {
   id: string;
@@ -131,7 +132,7 @@ export default function TripsPage() {
             <h1 className="text-3xl font-bold text-gray-900">My Trips</h1>
             <button
               onClick={() => setShowCreateForm(!showCreateForm)}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
+              className="px-4 py-2 min-h-[44px] bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
             >
               {showCreateForm ? "Cancel" : "Create Trip"}
             </button>
@@ -200,7 +201,7 @@ export default function TripsPage() {
                 <button
                   type="submit"
                   disabled={creating || !title.trim()}
-                  className="w-full px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-green-400 disabled:cursor-not-allowed font-medium"
+                  className="w-full px-6 py-2 min-h-[44px] bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-green-400 disabled:cursor-not-allowed font-medium"
                 >
                   {creating ? "Creating..." : "Create Trip"}
                 </button>
@@ -214,7 +215,11 @@ export default function TripsPage() {
               My Trips
             </h2>
             {loading ? (
-              <p className="text-gray-600 text-center py-4">Loading...</p>
+              <div className="space-y-3">
+                <TripCardSkeleton />
+                <TripCardSkeleton />
+                <TripCardSkeleton />
+              </div>
             ) : trips.length === 0 ? (
               <p className="text-gray-600 text-center py-4">
                 No trips yet. Create your first trip above!
@@ -261,7 +266,10 @@ export default function TripsPage() {
               Trips Shared with Me
             </h2>
             {sharedLoading ? (
-              <p className="text-gray-600 text-center py-4">Loading...</p>
+              <div className="space-y-3">
+                <TripCardSkeleton />
+                <TripCardSkeleton />
+              </div>
             ) : sharedTrips.length === 0 ? (
               <p className="text-gray-600 text-center py-4">
                 No friends have shared trips with you yet.
