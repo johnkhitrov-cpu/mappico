@@ -7,6 +7,7 @@ import { getAuthHeaders } from "@/lib/clientAuth";
 import { useGlobalToast } from "@/components/ClientLayout";
 import Map, { Marker } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
+import PointDetailsModal from "@/components/PointDetailsModal";
 
 interface Trip {
   id: string;
@@ -15,6 +16,11 @@ interface Trip {
   visibility: string;
   createdAt: string;
   updatedAt: string;
+  isOwner: boolean;
+  owner?: {
+    id: string;
+    email: string;
+  };
 }
 
 interface Point {
@@ -51,13 +57,19 @@ export default function TripDetailPage() {
   // Edit form state
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [visibility, setVisibility] = useState<"PRIVATE" | "FRIENDS">("PRIVATE");
+  const [visibility, setVisibility] = useState<"PRIVATE" | "FRIENDS" | "UNLISTED">("PRIVATE");
 
   // Trip points state
   const [tripPoints, setTripPoints] = useState<TripPoint[]>([]);
   const [pointsLoading, setPointsLoading] = useState(false);
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
   const [removingPointId, setRemovingPointId] = useState<string | null>(null);
+
+  // Share link state
+  const [generatingShareLink, setGeneratingShareLink] = useState(false);
+
+  // Point details modal state
+  const [selectedPointForModal, setSelectedPointForModal] = useState<TripPoint | null>(null);
 
   // Map state
   const [viewState, setViewState] = useState({
@@ -235,16 +247,45 @@ export default function TripDetailPage() {
     }
   };
 
-  const handlePointClick = (pointId: string, lat: number, lng: number) => {
-    setSelectedPointId(pointId);
+  const handlePointClick = (tripPoint: TripPoint) => {
+    setSelectedPointId(tripPoint.pointId);
+    setSelectedPointForModal(tripPoint);
 
     // Center map on clicked point
     if (mapRef.current) {
       mapRef.current.flyTo({
-        center: [lng, lat],
+        center: [tripPoint.point.lng, tripPoint.point.lat],
         zoom: 12,
         duration: 1000,
       });
+    }
+  };
+
+  const handleCopyShareLink = async () => {
+    setGeneratingShareLink(true);
+
+    try {
+      const response = await fetch(`/api/trips/${tripId}/share-token`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        showError(data.error || "Failed to generate share link");
+        throw new Error(data.error);
+      }
+
+      const data = await response.json();
+
+      // Copy to clipboard
+      await navigator.clipboard.writeText(data.shareUrl);
+
+      success("Share link copied to clipboard!");
+    } catch (err) {
+      console.error("Generate share link error:", err);
+    } finally {
+      setGeneratingShareLink(false);
     }
   };
 
@@ -275,6 +316,19 @@ export default function TripDetailPage() {
             >
               ← Back to Trips
             </button>
+
+            {/* Shared badge */}
+            {!trip.isOwner && trip.owner && (
+              <div className="mb-2 flex items-center gap-2">
+                <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
+                  👤 Shared by {trip.owner.email}
+                </span>
+                <span className="inline-block px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full" title="You cannot edit this trip">
+                  🔒 Read-only
+                </span>
+              </div>
+            )}
+
             <h1 className="text-2xl font-bold text-gray-900 mb-1">
               {trip.title}
             </h1>
@@ -283,7 +337,9 @@ export default function TripDetailPage() {
             </p>
             <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
               <span>
-                {trip.visibility === "PRIVATE" ? "🔒 Private" : "👥 Friends"}
+                {trip.visibility === "PRIVATE" && "🔒 Private"}
+                {trip.visibility === "FRIENDS" && "👥 Friends"}
+                {trip.visibility === "UNLISTED" && "🔗 Anyone with link"}
               </span>
               <span>
                 {tripPoints.length} {tripPoints.length === 1 ? "point" : "points"}
@@ -303,21 +359,31 @@ export default function TripDetailPage() {
               </p>
             ) : tripPoints.length === 0 ? (
               <div className="text-center py-8">
-                <p className="text-gray-500 mb-2">No points in this trip yet.</p>
-                <p className="text-sm text-gray-400">
-                  Go to{" "}
-                  <a href="/map" className="text-blue-600 hover:underline">
-                    /map
-                  </a>{" "}
-                  and create points with this trip selected.
+                <p className="text-gray-500 mb-2">
+                  {trip.isOwner
+                    ? "No points in this trip yet."
+                    : "This trip has no points yet."}
                 </p>
+                {trip.isOwner ? (
+                  <p className="text-sm text-gray-400">
+                    Go to{" "}
+                    <a href="/map" className="text-blue-600 hover:underline">
+                      /map
+                    </a>{" "}
+                    and create points with this trip selected.
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-400">
+                    The owner hasn't added places yet.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="space-y-3">
                 {tripPoints.map((tp) => (
                   <div
                     key={tp.id}
-                    onClick={() => handlePointClick(tp.pointId, tp.point.lat, tp.point.lng)}
+                    onClick={() => handlePointClick(tp)}
                     className={`border rounded-lg p-3 cursor-pointer transition-all ${
                       selectedPointId === tp.pointId
                         ? "border-blue-500 bg-blue-50 shadow-md"
@@ -356,33 +422,76 @@ export default function TripDetailPage() {
                       </div>
                     </div>
 
-                    {/* Remove button */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRemoveFromTrip(tp.pointId);
-                      }}
-                      disabled={removingPointId === tp.pointId}
-                      className="mt-2 w-full px-3 py-1 text-sm bg-red-50 text-red-600 rounded hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {removingPointId === tp.pointId
-                        ? "Removing..."
-                        : "Remove from trip"}
-                    </button>
+                    {/* Remove button - only show if owner */}
+                    {trip.isOwner && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveFromTrip(tp.pointId);
+                        }}
+                        disabled={removingPointId === tp.pointId}
+                        className="mt-2 w-full px-3 py-1 text-sm bg-red-50 text-red-600 rounded hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {removingPointId === tp.pointId
+                          ? "Removing..."
+                          : "Remove from trip"}
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Edit Section (Collapsible) */}
-          <div className="p-4 border-t mt-4">
-            <details className="group">
-              <summary className="cursor-pointer text-lg font-semibold text-gray-900 mb-3">
-                Edit Trip Info
-              </summary>
+          {/* Share Section - only show if owner */}
+          {trip.isOwner && (
+            <div className="p-4 border-t mt-4">
+              <h2 className="text-lg font-semibold text-gray-900 mb-3">
+                Share Trip
+              </h2>
+              {trip.visibility === "UNLISTED" ? (
+                <div>
+                  <p className="text-sm text-gray-600 mb-2">
+                    Anyone with the share link can view this trip (no login required).
+                  </p>
+                  <div className="p-2 bg-amber-50 border border-amber-200 rounded-md mb-3">
+                    <p className="text-xs text-amber-800">
+                      ⚠️ Use the share link below, not the browser URL. Friends without
+                      the link cannot access this trip.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleCopyShareLink}
+                    disabled={generatingShareLink}
+                    className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-green-400 disabled:cursor-not-allowed font-medium"
+                  >
+                    {generatingShareLink ? "Generating..." : "Copy share link"}
+                  </button>
+                  <p className="text-xs text-gray-500 mt-2 text-center">
+                    Share link format: /share/trips/&lt;token&gt;
+                  </p>
+                </div>
+              ) : (
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                  <p className="text-sm text-gray-700">
+                    💡 Set visibility to{" "}
+                    <span className="font-semibold">Anyone with link</span> in the edit
+                    section below to enable link sharing.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
-              <form onSubmit={handleUpdate} className="space-y-4 mt-4">
+          {/* Edit Section (Collapsible) - only show if owner */}
+          {trip.isOwner && (
+            <div className="p-4 border-t mt-4">
+              <details className="group">
+                <summary className="cursor-pointer text-lg font-semibold text-gray-900 mb-3">
+                  Edit Trip Info
+                </summary>
+
+                <form onSubmit={handleUpdate} className="space-y-4 mt-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Title <span className="text-red-500">*</span>
@@ -425,13 +534,14 @@ export default function TripDetailPage() {
                   <select
                     value={visibility}
                     onChange={(e) =>
-                      setVisibility(e.target.value as "PRIVATE" | "FRIENDS")
+                      setVisibility(e.target.value as "PRIVATE" | "FRIENDS" | "UNLISTED")
                     }
                     disabled={editing}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="PRIVATE">Private (Only me)</option>
                     <option value="FRIENDS">Friends (Visible to friends)</option>
+                    <option value="UNLISTED">Unlisted (Anyone with link)</option>
                   </select>
                 </div>
 
@@ -454,6 +564,7 @@ export default function TripDetailPage() {
               </form>
             </details>
           </div>
+          )}
         </div>
 
         {/* Right Side - Map */}
@@ -479,7 +590,7 @@ export default function TripDetailPage() {
                   anchor="bottom"
                   onClick={(e) => {
                     e.originalEvent.stopPropagation();
-                    handlePointClick(tp.pointId, tp.point.lat, tp.point.lng);
+                    handlePointClick(tp);
                   }}
                 >
                   <div
@@ -523,6 +634,13 @@ export default function TripDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Point Details Modal */}
+      <PointDetailsModal
+        point={selectedPointForModal?.point || null}
+        note={selectedPointForModal?.note}
+        onClose={() => setSelectedPointForModal(null)}
+      />
     </AuthGuard>
   );
 }

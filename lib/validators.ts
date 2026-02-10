@@ -25,7 +25,7 @@ export const tripCreateSchema = z.object({
   description: z.string()
     .max(1000, 'Description must be at most 1000 characters')
     .optional(),
-  visibility: z.enum(['PRIVATE', 'FRIENDS']).default('PRIVATE'),
+  visibility: z.enum(['PRIVATE', 'FRIENDS', 'UNLISTED']).default('PRIVATE'),
 });
 
 export const tripUpdateSchema = z.object({
@@ -37,7 +37,7 @@ export const tripUpdateSchema = z.object({
     .max(1000, 'Description must be at most 1000 characters')
     .optional()
     .nullable(),
-  visibility: z.enum(['PRIVATE', 'FRIENDS']).optional(),
+  visibility: z.enum(['PRIVATE', 'FRIENDS', 'UNLISTED']).optional(),
 });
 
 export const tripPointAddSchema = z.object({

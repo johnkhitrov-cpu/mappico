@@ -4,7 +4,8 @@ import { prisma } from '@/lib/prisma';
 import { tripCreateSchema } from '@/lib/validators';
 import { rateLimit, createAuthRateLimitKey } from '@/lib/rateLimit';
 
-// GET /api/trips - List user's trips
+// GET /api/trips - List user's trips or shared trips
+// Query params: ?shared=true to get trips shared with user by friends
 export async function GET(request: NextRequest) {
   const authResult = getAuthUser(request);
 
@@ -13,22 +14,78 @@ export async function GET(request: NextRequest) {
   }
 
   const { userId } = authResult;
+  const { searchParams } = new URL(request.url);
+  const shared = searchParams.get('shared') === 'true';
 
   try {
-    const trips = await prisma.trip.findMany({
-      where: { ownerId: userId },
-      orderBy: { updatedAt: 'desc' },
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        visibility: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    if (shared) {
+      // Get trips shared with user by friends
+      // 1. Find all confirmed friends
+      const friendRequests = await prisma.friendRequest.findMany({
+        where: {
+          status: 'accepted',
+          OR: [
+            { fromUserId: userId },
+            { toUserId: userId },
+          ],
+        },
+        select: {
+          fromUserId: true,
+          toUserId: true,
+        },
+      });
 
-    return NextResponse.json({ trips });
+      // Extract friend IDs
+      const friendIds = friendRequests.map((req) =>
+        req.fromUserId === userId ? req.toUserId : req.fromUserId
+      );
+
+      if (friendIds.length === 0) {
+        // No friends, no shared trips
+        return NextResponse.json({ trips: [] });
+      }
+
+      // 2. Find trips owned by friends with visibility = FRIENDS
+      const trips = await prisma.trip.findMany({
+        where: {
+          ownerId: { in: friendIds },
+          visibility: 'FRIENDS',
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          visibility: true,
+          createdAt: true,
+          updatedAt: true,
+          owner: {
+            select: {
+              id: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+      return NextResponse.json({ trips });
+    } else {
+      // Get user's own trips
+      const trips = await prisma.trip.findMany({
+        where: { ownerId: userId },
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          visibility: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      return NextResponse.json({ trips });
+    }
   } catch (error) {
     console.error('GET /api/trips error:', error);
     return NextResponse.json(

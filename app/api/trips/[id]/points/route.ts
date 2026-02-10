@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/apiAuth';
 import { prisma } from '@/lib/prisma';
 import { tripPointAddSchema } from '@/lib/validators';
+import { areFriends } from '@/lib/friendsHelper';
 
 // GET /api/trips/[id]/points - List points in trip
 export async function GET(
@@ -18,10 +19,13 @@ export async function GET(
   const { id: tripId } = await params;
 
   try {
-    // Check trip ownership
+    // Check trip access
     const trip = await prisma.trip.findUnique({
       where: { id: tripId },
-      select: { ownerId: true },
+      select: {
+        ownerId: true,
+        visibility: true,
+      },
     });
 
     if (!trip) {
@@ -31,11 +35,28 @@ export async function GET(
       );
     }
 
-    if (trip.ownerId !== userId) {
-      return NextResponse.json(
-        { error: 'Forbidden: You can only view your own trips' },
-        { status: 403 }
-      );
+    // Check access permissions
+    const isOwner = trip.ownerId === userId;
+
+    if (!isOwner) {
+      // If not owner, check if trip is visible to friends and user is a friend
+      if (trip.visibility === 'FRIENDS') {
+        const isFriend = await areFriends(userId, trip.ownerId);
+        if (!isFriend) {
+          // Not a friend, return 404 to avoid leaking trip existence
+          return NextResponse.json(
+            { error: 'Trip not found' },
+            { status: 404 }
+          );
+        }
+        // Friend has read access, continue
+      } else {
+        // Trip is PRIVATE and user is not owner
+        return NextResponse.json(
+          { error: 'Trip not found' },
+          { status: 404 }
+        );
+      }
     }
 
     // Get trip points with point details

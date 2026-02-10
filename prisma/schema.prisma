@@ -54,18 +54,21 @@ model FriendRequest {
 }
 
 model Trip {
-  id          String   @id @default(cuid())
-  ownerId     String
-  title       String
-  description String?
-  visibility  String   @default("PRIVATE")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                  String    @id @default(cuid())
+  ownerId             String
+  title               String
+  description         String?
+  visibility          String    @default("PRIVATE")
+  shareToken          String?   @unique
+  shareTokenCreatedAt DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   owner       User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   tripPoints  TripPoint[]
 
   @@index([ownerId])
+  @@index([shareToken])
 }
 
 model TripPoint {

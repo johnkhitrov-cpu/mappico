@@ -13,6 +13,10 @@ interface Trip {
   visibility: string;
   createdAt: string;
   updatedAt: string;
+  owner?: {
+    id: string;
+    email: string;
+  };
 }
 
 export default function TripsPage() {
@@ -20,17 +24,20 @@ export default function TripsPage() {
   const { success, error: showError } = useGlobalToast();
 
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [sharedTrips, setSharedTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sharedLoading, setSharedLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
 
   // Form state
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [visibility, setVisibility] = useState<"PRIVATE" | "FRIENDS">("PRIVATE");
+  const [visibility, setVisibility] = useState<"PRIVATE" | "FRIENDS" | "UNLISTED">("PRIVATE");
 
   useEffect(() => {
     fetchTrips();
+    fetchSharedTrips();
   }, []);
 
   const fetchTrips = async () => {
@@ -50,6 +57,27 @@ export default function TripsPage() {
       showError(err instanceof Error ? err.message : "Failed to load trips");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSharedTrips = async () => {
+    setSharedLoading(true);
+    try {
+      const response = await fetch("/api/trips?shared=true", {
+        headers: getAuthHeaders(),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch shared trips");
+      }
+
+      const data = await response.json();
+      setSharedTrips(data.trips);
+    } catch (err) {
+      console.error("Failed to load shared trips:", err);
+      // Don't show error toast for shared trips, just log it
+    } finally {
+      setSharedLoading(false);
     }
   };
 
@@ -159,12 +187,13 @@ export default function TripsPage() {
                   </label>
                   <select
                     value={visibility}
-                    onChange={(e) => setVisibility(e.target.value as "PRIVATE" | "FRIENDS")}
+                    onChange={(e) => setVisibility(e.target.value as "PRIVATE" | "FRIENDS" | "UNLISTED")}
                     disabled={creating}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="PRIVATE">Private (Only me)</option>
                     <option value="FRIENDS">Friends (Visible to friends)</option>
+                    <option value="UNLISTED">Unlisted (Anyone with link)</option>
                   </select>
                 </div>
 
@@ -179,10 +208,10 @@ export default function TripsPage() {
             </div>
           )}
 
-          {/* Trips list */}
-          <div className="bg-white rounded-lg shadow p-6">
+          {/* My Trips list */}
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">
-              All Trips
+              My Trips
             </h2>
             {loading ? (
               <p className="text-gray-600 text-center py-4">Loading...</p>
@@ -210,7 +239,59 @@ export default function TripsPage() {
                         )}
                         <div className="flex gap-3 mt-2">
                           <span className="text-xs text-gray-500">
-                            {trip.visibility === "PRIVATE" ? "🔒 Private" : "👥 Friends"}
+                            {trip.visibility === "PRIVATE" && "🔒 Private"}
+                            {trip.visibility === "FRIENDS" && "👥 Friends"}
+                            {trip.visibility === "UNLISTED" && "🔗 Anyone with link"}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            Updated {new Date(trip.updatedAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Shared Trips list */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">
+              Trips Shared with Me
+            </h2>
+            {sharedLoading ? (
+              <p className="text-gray-600 text-center py-4">Loading...</p>
+            ) : sharedTrips.length === 0 ? (
+              <p className="text-gray-600 text-center py-4">
+                No friends have shared trips with you yet.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {sharedTrips.map((trip) => (
+                  <div
+                    key={trip.id}
+                    onClick={() => router.push(`/trips/${trip.id}`)}
+                    className="p-4 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 cursor-pointer transition-colors"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="text-lg font-medium text-gray-900">
+                            {trip.title}
+                          </h3>
+                          <span className="px-2 py-0.5 bg-blue-600 text-white text-xs rounded-full">
+                            Shared
+                          </span>
+                        </div>
+                        {trip.description && (
+                          <p className="text-sm text-gray-600 mt-1 line-clamp-2">
+                            {trip.description}
+                          </p>
+                        )}
+                        <div className="flex gap-3 mt-2">
+                          <span className="text-xs text-gray-500">
+                            👤 Shared by {trip.owner?.email}
                           </span>
                           <span className="text-xs text-gray-500">
                             Updated {new Date(trip.updatedAt).toLocaleDateString()}

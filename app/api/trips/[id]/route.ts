@@ -3,6 +3,7 @@ import { getAuthUser } from '@/lib/apiAuth';
 import { prisma } from '@/lib/prisma';
 import { tripUpdateSchema } from '@/lib/validators';
 import { rateLimit, createAuthRateLimitKey } from '@/lib/rateLimit';
+import { areFriends } from '@/lib/friendsHelper';
 
 // GET /api/trips/[id]
 export async function GET(
@@ -29,6 +30,12 @@ export async function GET(
         visibility: true,
         createdAt: true,
         updatedAt: true,
+        owner: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
       },
     });
 
@@ -39,17 +46,38 @@ export async function GET(
       );
     }
 
-    // Ownership check
-    if (trip.ownerId !== userId) {
-      return NextResponse.json(
-        { error: 'Forbidden: You can only view your own trips' },
-        { status: 403 }
-      );
+    // Check access permissions
+    const isOwner = trip.ownerId === userId;
+
+    if (!isOwner) {
+      // If not owner, check if trip is visible to friends and user is a friend
+      if (trip.visibility === 'FRIENDS') {
+        const isFriend = await areFriends(userId, trip.ownerId);
+        if (!isFriend) {
+          // Not a friend, return 404 to avoid leaking trip existence
+          return NextResponse.json(
+            { error: 'Trip not found' },
+            { status: 404 }
+          );
+        }
+        // Friend has read access, continue
+      } else {
+        // Trip is PRIVATE and user is not owner
+        return NextResponse.json(
+          { error: 'Trip not found' },
+          { status: 404 }
+        );
+      }
     }
 
-    // Remove ownerId before response
-    const { ownerId: _ownerId, ...tripWithoutOwner } = trip;
-    return NextResponse.json({ trip: tripWithoutOwner });
+    // Return trip with owner info and isOwner flag
+    const { ownerId: _ownerId, ...tripData } = trip;
+    return NextResponse.json({
+      trip: {
+        ...tripData,
+        isOwner,
+      }
+    });
   } catch (error) {
     console.error('GET /api/trips/[id] error:', error);
     return NextResponse.json(
@@ -96,10 +124,13 @@ export async function PATCH(
   }
 
   try {
-    // Check ownership
+    // Check ownership and get current visibility
     const existingTrip = await prisma.trip.findUnique({
       where: { id: tripId },
-      select: { ownerId: true },
+      select: {
+        ownerId: true,
+        visibility: true,
+      },
     });
 
     if (!existingTrip) {
@@ -129,6 +160,12 @@ export async function PATCH(
     }
     if (validatedData.visibility !== undefined) {
       updateData.visibility = validatedData.visibility;
+
+      // If changing visibility from UNLISTED to something else, invalidate share token
+      if (existingTrip.visibility === 'UNLISTED' && validatedData.visibility !== 'UNLISTED') {
+        updateData.shareToken = null;
+        updateData.shareTokenCreatedAt = null;
+      }
     }
 
     const trip = await prisma.trip.update({
