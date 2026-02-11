@@ -55,6 +55,9 @@ export default function Navigation() {
         { href: "/register", label: "Register" },
       ];
 
+  // Hide global nav on /map — replaced by in-map top bar
+  if (pathname === "/map") return null;
+
   return (
     <nav className="bg-gray-800 text-white">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

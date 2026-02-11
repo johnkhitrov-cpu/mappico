@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Map, { NavigationControl, Marker } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { getAuthHeaders } from "@/lib/clientAuth";
@@ -8,6 +8,9 @@ import { useGlobalToast } from "./ClientLayout";
 import { useOnboarding } from "@/lib/useOnboarding";
 import { useAnalytics } from "@/lib/analytics";
 import FriendsDrawer from './FriendsDrawer';
+import MapDrawer from './MapDrawer';
+import TripsDrawer from './TripsDrawer';
+import ProfileModal from './ProfileModal';
 
 interface Point {
   id: string;
@@ -142,17 +145,34 @@ export default function MapComponent() {
   const [editCategory, setEditCategory] = useState<'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER'>('PLACE');
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState("");
+  const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
+  const [editPhotoPreview, setEditPhotoPreview] = useState<string | null>(null);
+  const [editRemovePhoto, setEditRemovePhoto] = useState(false);
 
   // Filter state
   const [showMyPoints, setShowMyPoints] = useState(true);
   const [showFriendsPoints, setShowFriendsPoints] = useState(true);
   const [selectedFriendId, setSelectedFriendId] = useState<string>("all");
-  const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
-  const filtersRef = useRef<HTMLDivElement>(null);
 
   // Friends drawer state
   const [showFriendsDrawer, setShowFriendsDrawer] = useState(false);
   const [incomingRequests, setIncomingRequests] = useState<IncomingRequest[]>([]);
+
+  // Mode state (Map vs Trips)
+  const [mode, setMode] = useState<'map' | 'trips'>('map');
+
+  // Trips drawer state
+  const [showTripsDrawer, setShowTripsDrawer] = useState(false);
+
+  // Active trip filter
+  const [activeTripId, setActiveTripId] = useState<string | null>(null);
+  const [activeTripPointIds, setActiveTripPointIds] = useState<Set<string>>(new Set());
+
+  // Left drawer state
+  const [showMapDrawer, setShowMapDrawer] = useState(false);
+
+  // Profile modal state
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
   // Geolocation state
   const [locatingUser, setLocatingUser] = useState(false);
@@ -282,39 +302,6 @@ export default function MapComponent() {
     };
   }, []);
 
-  // Close filters dropdown on outside click
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (filtersRef.current && !filtersRef.current.contains(e.target as Node)) {
-        setShowFiltersDropdown(false);
-      }
-    };
-
-    if (showFiltersDropdown) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showFiltersDropdown]);
-
-  // Close filters dropdown on ESC key
-  useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowFiltersDropdown(false);
-      }
-    };
-
-    if (showFiltersDropdown) {
-      document.addEventListener('keydown', handleEsc);
-    }
-
-    return () => {
-      document.removeEventListener('keydown', handleEsc);
-    };
-  }, [showFiltersDropdown]);
 
   const fetchAllData = async () => {
     setLoading(true);
@@ -357,6 +344,33 @@ export default function MapComponent() {
       console.error("Failed to fetch incoming requests:", err);
     }
   };
+
+  // Fetch trip point IDs when activeTripId changes
+  useEffect(() => {
+    if (!activeTripId) {
+      setActiveTripPointIds(new Set());
+      return;
+    }
+
+    const fetchTripPointIds = async () => {
+      try {
+        const response = await fetch(`/api/trips/${activeTripId}/points`, {
+          headers: getAuthHeaders(),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          const ids = new Set<string>(
+            (data.tripPoints || []).map((tp: { pointId: string }) => tp.pointId)
+          );
+          setActiveTripPointIds(ids);
+        }
+      } catch (err) {
+        console.error('Failed to fetch trip points:', err);
+      }
+    };
+
+    fetchTripPointIds();
+  }, [activeTripId]);
 
   const handleMapClick = (event: any) => {
     const { lngLat } = event;
@@ -614,12 +628,44 @@ export default function MapComponent() {
     setEditTitle(selectedPoint.title);
     setEditDescription(selectedPoint.description || "");
     setEditCategory(selectedPoint.category);
+    setEditPhotoFile(null);
+    setEditPhotoPreview(null);
+    setEditRemovePhoto(false);
     setIsEditing(true);
     setUpdateError("");
   };
 
   const handleCancelEdit = () => {
+    if (editPhotoPreview) URL.revokeObjectURL(editPhotoPreview);
+    setEditPhotoFile(null);
+    setEditPhotoPreview(null);
+    setEditRemovePhoto(false);
     setIsEditing(false);
+    setUpdateError("");
+  };
+
+  const handleEditPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const MAX_FILE_SIZE = 5 * 1024 * 1024;
+    const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+    if (file.size > MAX_FILE_SIZE) {
+      setUpdateError("File size exceeds 5MB limit");
+      e.target.value = "";
+      return;
+    }
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setUpdateError("Only JPG, PNG, and WEBP images are allowed");
+      e.target.value = "";
+      return;
+    }
+
+    if (editPhotoPreview) URL.revokeObjectURL(editPhotoPreview);
+    setEditPhotoFile(file);
+    setEditPhotoPreview(URL.createObjectURL(file));
+    setEditRemovePhoto(false);
     setUpdateError("");
   };
 
@@ -635,17 +681,48 @@ export default function MapComponent() {
     setUpdateError("");
 
     try {
+      let newPhotoUrl: string | undefined;
+
+      // Upload new photo if selected
+      if (editPhotoFile) {
+        const formData = new FormData();
+        formData.append("file", editPhotoFile);
+        formData.append("upload_preset", process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!);
+        formData.append("folder", "mappico");
+
+        const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+        const uploadResponse = await fetch(
+          `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+          { method: "POST", body: formData }
+        );
+
+        if (!uploadResponse.ok) {
+          throw new Error("Failed to upload image");
+        }
+
+        const uploadData = await uploadResponse.json();
+        newPhotoUrl = uploadData.secure_url;
+      }
+
+      const body: Record<string, unknown> = {
+        title: editTitle,
+        description: editDescription || undefined,
+        category: editCategory,
+      };
+
+      if (editRemovePhoto) {
+        body.removePhoto = true;
+      } else if (newPhotoUrl) {
+        body.photoUrl = newPhotoUrl;
+      }
+
       const response = await fetch(`/api/points/${selectedPoint.id}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           ...getAuthHeaders(),
         },
-        body: JSON.stringify({
-          title: editTitle,
-          description: editDescription || undefined,
-          category: editCategory,
-        }),
+        body: JSON.stringify(body),
       });
 
       const data = await response.json();
@@ -653,6 +730,12 @@ export default function MapComponent() {
       if (!response.ok) {
         throw new Error(data.error || "Failed to update point");
       }
+
+      // Cleanup preview
+      if (editPhotoPreview) URL.revokeObjectURL(editPhotoPreview);
+      setEditPhotoFile(null);
+      setEditPhotoPreview(null);
+      setEditRemovePhoto(false);
 
       // Update local state
       setMyPoints(prev =>
@@ -728,7 +811,6 @@ export default function MapComponent() {
     setSelectedFriendId(friendId);
     setShowFriendsPoints(true);
     setShowMyPoints(false);
-    setShowFiltersDropdown(false);
   };
 
   const handleRefreshFriends = () => {
@@ -736,13 +818,19 @@ export default function MapComponent() {
     fetchIncomingRequests();
   };
 
-  // Compute visible points based on filters
-  const visibleMyPoints = showMyPoints ? myPoints : [];
-  const visibleFriendPoints = showFriendsPoints
+  // Compute visible points based on filters + trip filter
+  let visibleMyPoints = showMyPoints ? myPoints : [];
+  let visibleFriendPoints = showFriendsPoints
     ? selectedFriendId === "all"
       ? friendPoints
       : friendPoints.filter((p) => p.userId === selectedFriendId)
     : [];
+
+  // Apply trip filter on top of existing filters
+  if (activeTripId) {
+    visibleMyPoints = visibleMyPoints.filter((p) => activeTripPointIds.has(p.id));
+    visibleFriendPoints = visibleFriendPoints.filter((p) => activeTripPointIds.has(p.id));
+  }
 
   // Check if there are any visible points
   const hasVisiblePoints = visibleMyPoints.length > 0 || visibleFriendPoints.length > 0;
@@ -758,7 +846,81 @@ export default function MapComponent() {
   }
 
   return (
-    <div className="h-full w-full relative">
+    <div className="h-full w-full relative flex flex-col">
+      {/* Mapstr-style top bar */}
+      <div className="relative z-30 bg-white border-b border-gray-200 shadow-sm px-4 py-2 flex items-center justify-between">
+        {/* Left: hamburger */}
+        <button
+          onClick={() => {
+            setShowMapDrawer(true);
+            setShowTripsDrawer(false);
+            setShowFriendsDrawer(false);
+            setMode('map');
+          }}
+          className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors"
+          aria-label="Menu"
+        >
+          <svg className="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+
+        {/* Center: segmented toggle */}
+        <div className="flex bg-gray-100 rounded-full p-1">
+          <button
+            onClick={() => {
+              setMode('map');
+              setShowTripsDrawer(false);
+            }}
+            className={`px-5 py-1.5 rounded-full text-sm font-medium transition-colors ${
+              mode === 'map'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Map
+          </button>
+          <button
+            onClick={() => {
+              setMode('trips');
+              setShowTripsDrawer(true);
+              setShowFriendsDrawer(false);
+              setShowMapDrawer(false);
+            }}
+            className={`px-5 py-1.5 rounded-full text-sm font-medium transition-colors ${
+              mode === 'trips'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Trips
+          </button>
+        </div>
+
+        {/* Right: friends icon */}
+        <button
+          onClick={() => {
+            setShowFriendsDrawer(true);
+            setShowTripsDrawer(false);
+            setShowMapDrawer(false);
+            setMode('map');
+          }}
+          className="relative w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors"
+          aria-label="Friends"
+        >
+          <svg className="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+          {incomingRequests.length > 0 && (
+            <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+              {incomingRequests.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Map area */}
+      <div className="flex-1 relative">
       {loading && (
         <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10 bg-white px-4 py-2 rounded-lg shadow-md">
           <p className="text-sm text-gray-600">Loading points...</p>
@@ -785,76 +947,6 @@ export default function MapComponent() {
         </div>
       )}
 
-      {/* Filters button + dropdown */}
-      <div ref={filtersRef} className="absolute top-4 left-4 z-20">
-        <button
-          onClick={() => setShowFiltersDropdown(!showFiltersDropdown)}
-          className="bg-white text-gray-800 px-4 py-2 rounded-lg shadow-lg hover:bg-gray-50 font-medium text-sm transition-colors flex items-center gap-2"
-        >
-          <span>Filters</span>
-          <span className="text-xs">{showFiltersDropdown ? '▲' : '▼'}</span>
-        </button>
-
-        {showFiltersDropdown && (
-          <div className="absolute top-12 left-0 bg-white rounded-lg shadow-xl p-4 w-64">
-            <h3 className="text-sm font-bold text-gray-900 mb-3">Filters</h3>
-
-            {/* Show my points checkbox */}
-            <div className="mb-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showMyPoints}
-                  onChange={(e) => setShowMyPoints(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-700">Show my points</span>
-              </label>
-            </div>
-
-            {/* Show friends points checkbox */}
-            <div className="mb-3">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showFriendsPoints}
-                  onChange={(e) => setShowFriendsPoints(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-700">Show friends points</span>
-              </label>
-            </div>
-
-            {/* Friend selector (only if friends points enabled) */}
-            {showFriendsPoints && friends.length > 0 && (
-              <div className="mb-3">
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Friend
-                </label>
-                <select
-                  value={selectedFriendId}
-                  onChange={(e) => setSelectedFriendId(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="all">All friends</option>
-                  {friends.map((friend) => (
-                    <option key={friend.id} value={friend.id}>
-                      {friend.email}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Counters */}
-            <div className="pt-3 border-t border-gray-200 text-xs text-gray-600 space-y-1">
-              <div>My points: <span className="font-medium">{myPoints.length}</span></div>
-              <div>Friends points: <span className="font-medium">{friendPoints.length}</span></div>
-            </div>
-          </div>
-        )}
-      </div>
-
       <Map
         {...viewState}
         onMove={(evt) => setViewState(evt.viewState)}
@@ -865,18 +957,17 @@ export default function MapComponent() {
       >
         <NavigationControl position="top-right" />
 
-        {/* Friends drawer button */}
+        {/* Gear / Profile button */}
         <div className="absolute bottom-4 left-4 z-10">
           <button
-            onClick={() => setShowFriendsDrawer(true)}
-            className="bg-white hover:bg-gray-100 text-gray-700 rounded-lg px-4 py-2 shadow-lg font-medium text-sm transition-colors"
+            onClick={() => setShowProfileModal(true)}
+            className="bg-white hover:bg-gray-100 text-gray-700 rounded-full p-3 shadow-lg transition-colors"
+            title="Profile & Settings"
           >
-            👥 Friends
-            {incomingRequests.length > 0 && (
-              <span className="ml-2 bg-red-500 text-white text-xs rounded-full px-2 py-0.5">
-                {incomingRequests.length}
-              </span>
-            )}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
           </button>
         </div>
 
@@ -1211,6 +1302,74 @@ export default function MapComponent() {
                 </select>
               </div>
 
+              {/* Photo section */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Photo
+                </label>
+
+                {/* Current / preview photo */}
+                {editPhotoPreview ? (
+                  <div className="relative mb-2 w-full max-h-[160px] overflow-hidden rounded-xl bg-slate-100">
+                    <img src={editPhotoPreview} alt="New photo" className="h-full w-full object-cover block" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        URL.revokeObjectURL(editPhotoPreview);
+                        setEditPhotoFile(null);
+                        setEditPhotoPreview(null);
+                      }}
+                      disabled={updating}
+                      className="absolute top-2 right-2 bg-red-600 text-white rounded-full w-7 h-7 flex items-center justify-center hover:bg-red-700 shadow-lg text-sm"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ) : !editRemovePhoto && selectedPoint.photoUrl ? (
+                  <div className="relative mb-2 w-full max-h-[160px] overflow-hidden rounded-xl bg-slate-100">
+                    <img src={selectedPoint.photoUrl} alt="Current" className="h-full w-full object-cover block" />
+                  </div>
+                ) : null}
+
+                <div className="flex gap-2">
+                  <label className="flex-1">
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={handleEditPhotoChange}
+                      disabled={updating}
+                      className="hidden"
+                    />
+                    <div className="w-full px-3 py-2 border border-gray-300 rounded-xl text-gray-700 bg-white hover:bg-gray-50 cursor-pointer flex items-center justify-center font-medium text-sm transition-colors">
+                      {editPhotoFile ? editPhotoFile.name : "Upload photo"}
+                    </div>
+                  </label>
+                  {(selectedPoint.photoUrl && !editRemovePhoto && !editPhotoFile) && (
+                    <button
+                      type="button"
+                      onClick={() => setEditRemovePhoto(true)}
+                      disabled={updating}
+                      className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-xl border border-red-200 font-medium transition-colors"
+                    >
+                      Remove
+                    </button>
+                  )}
+                  {editRemovePhoto && (
+                    <button
+                      type="button"
+                      onClick={() => setEditRemovePhoto(false)}
+                      disabled={updating}
+                      className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-xl border border-gray-300 font-medium transition-colors"
+                    >
+                      Undo
+                    </button>
+                  )}
+                </div>
+                {editRemovePhoto && (
+                  <p className="text-xs text-red-500 mt-1">Photo will be removed on save.</p>
+                )}
+              </div>
+
               {/* Action Buttons */}
               <div className="flex gap-2 pt-2">
                 <button
@@ -1233,11 +1392,11 @@ export default function MapComponent() {
             /* VIEW MODE */
             <>
               {selectedPoint.photoUrl && (
-                <div className="mb-3">
+                <div className="mb-3 w-full max-h-[220px] overflow-hidden rounded-xl bg-slate-100">
                   <img
                     src={selectedPoint.photoUrl}
                     alt={selectedPoint.title}
-                    className="w-full h-48 object-cover rounded-md"
+                    className="h-full w-full object-cover block"
                   />
                 </div>
               )}
@@ -1322,6 +1481,52 @@ export default function MapComponent() {
         onFriendClick={handleFriendClick}
         onRefreshFriends={handleRefreshFriends}
       />
+
+      {/* Left hamburger drawer (filters + points list) */}
+      <MapDrawer
+        isOpen={showMapDrawer}
+        onClose={() => setShowMapDrawer(false)}
+        showMyPoints={showMyPoints}
+        setShowMyPoints={setShowMyPoints}
+        showFriendsPoints={showFriendsPoints}
+        setShowFriendsPoints={setShowFriendsPoints}
+        selectedFriendId={selectedFriendId}
+        setSelectedFriendId={setSelectedFriendId}
+        friends={friends}
+        myPointsCount={myPoints.length}
+        friendPointsCount={friendPoints.length}
+        myPoints={myPoints}
+        onPointClick={(point) => {
+          setViewState({ longitude: point.lng, latitude: point.lat, zoom: 14 });
+          setSelectedPoint({ ...point, isMine: true });
+        }}
+      />
+
+      {/* Trips drawer (left, opened by Trips mode) */}
+      <TripsDrawer
+        isOpen={showTripsDrawer}
+        onClose={() => {
+          setShowTripsDrawer(false);
+          setMode('map');
+        }}
+        trips={trips}
+        tripsLoading={tripsLoading}
+        activeTripId={activeTripId}
+        onTripSelect={(tripId) => {
+          setActiveTripId(tripId);
+        }}
+        onClearFilter={() => {
+          setActiveTripId(null);
+        }}
+        onTripsChanged={fetchTrips}
+      />
+
+      {/* Profile modal */}
+      <ProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+      />
+      </div>{/* end flex-1 map area */}
     </div>
   );
 }

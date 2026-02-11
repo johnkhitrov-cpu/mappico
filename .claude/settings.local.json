@@ -37,7 +37,8 @@
       "Bash(kill:*)",
       "Bash(pkill:*)",
       "Bash(xargs kill:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(npx next build:*)"
     ]
   }
 }

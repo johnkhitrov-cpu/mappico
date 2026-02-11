@@ -61,6 +61,8 @@ export const pointUpdateSchema = z.object({
   title: z.string().min(1, 'Title is required').max(80, 'Title must be at most 80 characters').optional(),
   description: z.string().max(500, 'Description must be at most 500 characters').optional().nullable(),
   category: z.enum(['PLACE', 'FOOD', 'STAY', 'ACTIVITY', 'OTHER']).optional(),
+  photoUrl: z.string().url('Photo URL must be a valid URL').optional().nullable(),
+  removePhoto: z.boolean().optional(),
 });
 
 export type RegisterInput = z.infer<typeof registerSchema>;

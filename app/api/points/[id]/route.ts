@@ -176,9 +176,9 @@ export async function PATCH(
     const validatedData = pointUpdateSchema.parse(body);
 
     // Validate at least one field is present
-    if (!validatedData.title && !validatedData.description && !validatedData.category) {
+    if (!validatedData.title && !validatedData.description && !validatedData.category && !validatedData.photoUrl && !validatedData.removePhoto) {
       return NextResponse.json(
-        { error: 'At least one field (title, description, or category) must be provided' },
+        { error: 'At least one field must be provided' },
         { status: 400 }
       );
     }
@@ -189,6 +189,7 @@ export async function PATCH(
       select: {
         id: true,
         userId: true,
+        photoUrl: true,
       },
     });
 
@@ -208,6 +209,42 @@ export async function PATCH(
       );
     }
 
+    // Handle photo changes
+    let photoUpdate: { photoUrl?: string | null } = {};
+    if (validatedData.removePhoto) {
+      photoUpdate = { photoUrl: null };
+      // Delete old photo from Cloudinary
+      if (point.photoUrl) {
+        try {
+          const urlParts = point.photoUrl.split('/');
+          const uploadIndex = urlParts.indexOf('upload');
+          if (uploadIndex !== -1 && uploadIndex + 2 < urlParts.length) {
+            const publicIdWithExt = urlParts.slice(uploadIndex + 2).join('/');
+            const publicId = publicIdWithExt.substring(0, publicIdWithExt.lastIndexOf('.'));
+            await cloudinary.uploader.destroy(publicId);
+          }
+        } catch (err) {
+          console.error('[PATCH POINT] Cloudinary delete old photo error:', err);
+        }
+      }
+    } else if (validatedData.photoUrl) {
+      // Delete old photo from Cloudinary if replacing
+      if (point.photoUrl) {
+        try {
+          const urlParts = point.photoUrl.split('/');
+          const uploadIndex = urlParts.indexOf('upload');
+          if (uploadIndex !== -1 && uploadIndex + 2 < urlParts.length) {
+            const publicIdWithExt = urlParts.slice(uploadIndex + 2).join('/');
+            const publicId = publicIdWithExt.substring(0, publicIdWithExt.lastIndexOf('.'));
+            await cloudinary.uploader.destroy(publicId);
+          }
+        } catch (err) {
+          console.error('[PATCH POINT] Cloudinary delete old photo error:', err);
+        }
+      }
+      photoUpdate = { photoUrl: validatedData.photoUrl };
+    }
+
     // Update the point
     const updatedPoint = await prisma.point.update({
       where: { id: pointId },
@@ -215,6 +252,7 @@ export async function PATCH(
         ...(validatedData.title && { title: validatedData.title }),
         ...(validatedData.description !== undefined && { description: validatedData.description }),
         ...(validatedData.category && { category: validatedData.category }),
+        ...photoUpdate,
       },
       select: {
         id: true,
