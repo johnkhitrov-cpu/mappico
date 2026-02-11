@@ -17,7 +17,7 @@ export function initAnalytics() {
   posthog.init(key, {
     api_host: host,
     person_profiles: 'always',
-    capture_pageviews: false,  // Manual tracking only
+    capture_pageview: false,  // Manual tracking only
     capture_pageleave: false,
     autocapture: false,         // No automatic click tracking
     disable_session_recording: true,
