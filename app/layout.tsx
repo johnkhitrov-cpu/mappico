@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import Navigation from "@/components/Navigation";
 import { ClientLayout } from "@/components/ClientLayout";
 import { AnalyticsProvider } from "@/lib/analytics";
 
@@ -19,7 +18,6 @@ export default function RootLayout({
       <body>
         <AnalyticsProvider>
           <ClientLayout>
-            <Navigation />
             {children}
           </ClientLayout>
         </AnalyticsProvider>

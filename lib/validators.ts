@@ -39,6 +39,8 @@ export const tripUpdateSchema = z.object({
     .optional()
     .nullable(),
   visibility: z.enum(['PRIVATE', 'FRIENDS', 'UNLISTED']).optional(),
+  coverImageUrl: z.string().url('Cover image URL must be a valid URL').optional().nullable(),
+  removeCoverImage: z.boolean().optional(),
 });
 
 export const tripPointAddSchema = z.object({
@@ -65,6 +67,13 @@ export const pointUpdateSchema = z.object({
   removePhoto: z.boolean().optional(),
 });
 
+export const profileUpdateSchema = z.object({
+  firstName: z.string().max(50, 'First name must be at most 50 characters').optional().nullable(),
+  lastName: z.string().max(50, 'Last name must be at most 50 characters').optional().nullable(),
+  avatarUrl: z.string().url('Avatar URL must be a valid URL').optional().nullable(),
+  removeAvatar: z.boolean().optional(),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type PointCreateInput = z.infer<typeof pointCreateSchema>;
@@ -73,3 +82,4 @@ export type TripCreateInput = z.infer<typeof tripCreateSchema>;
 export type TripUpdateInput = z.infer<typeof tripUpdateSchema>;
 export type TripPointAddInput = z.infer<typeof tripPointAddSchema>;
 export type TripPointUpdateInput = z.infer<typeof tripPointUpdateSchema>;
+export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>;

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/apiAuth';
 
 // Validation constants
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB in bytes
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'];
 
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     // Validate file size
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json(
-        { error: 'File size exceeds 5MB limit' },
+        { error: 'File size exceeds 20MB limit' },
         { status: 400 }
       );
     }

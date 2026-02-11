@@ -1,9 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/apiAuth';
 import { prisma } from '@/lib/prisma';
+import { v2 as cloudinary } from 'cloudinary';
 import { tripUpdateSchema } from '@/lib/validators';
 import { rateLimit, createAuthRateLimitKey } from '@/lib/rateLimit';
 import { areFriends } from '@/lib/friendsHelper';
+
+cloudinary.config({
+  cloud_name: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+function deleteCloudinaryImage(url: string) {
+  try {
+    const urlParts = url.split('/');
+    const uploadIndex = urlParts.indexOf('upload');
+    if (uploadIndex !== -1 && uploadIndex + 2 < urlParts.length) {
+      const publicIdWithExt = urlParts.slice(uploadIndex + 2).join('/');
+      const publicId = publicIdWithExt.substring(0, publicIdWithExt.lastIndexOf('.'));
+      return cloudinary.uploader.destroy(publicId);
+    }
+  } catch (err) {
+    console.error('[TRIP] Cloudinary delete error:', err);
+  }
+}
 
 // GET /api/trips/[id]
 export async function GET(
@@ -27,6 +48,7 @@ export async function GET(
         ownerId: true,
         title: true,
         description: true,
+        coverImageUrl: true,
         visibility: true,
         createdAt: true,
         updatedAt: true,
@@ -124,12 +146,13 @@ export async function PATCH(
   }
 
   try {
-    // Check ownership and get current visibility
+    // Check ownership and get current state
     const existingTrip = await prisma.trip.findUnique({
       where: { id: tripId },
       select: {
         ownerId: true,
         visibility: true,
+        coverImageUrl: true,
       },
     });
 
@@ -168,6 +191,19 @@ export async function PATCH(
       }
     }
 
+    // Handle cover image changes
+    if (validatedData.removeCoverImage) {
+      updateData.coverImageUrl = null;
+      if (existingTrip.coverImageUrl) {
+        await deleteCloudinaryImage(existingTrip.coverImageUrl);
+      }
+    } else if (validatedData.coverImageUrl !== undefined) {
+      if (existingTrip.coverImageUrl) {
+        await deleteCloudinaryImage(existingTrip.coverImageUrl);
+      }
+      updateData.coverImageUrl = validatedData.coverImageUrl;
+    }
+
     const trip = await prisma.trip.update({
       where: { id: tripId },
       data: updateData,
@@ -175,6 +211,7 @@ export async function PATCH(
         id: true,
         title: true,
         description: true,
+        coverImageUrl: true,
         visibility: true,
         createdAt: true,
         updatedAt: true,
@@ -211,6 +248,7 @@ export async function DELETE(
       select: {
         id: true,
         ownerId: true,
+        coverImageUrl: true,
       },
     });
 
@@ -226,6 +264,11 @@ export async function DELETE(
         { error: 'Forbidden: You can only delete your own trips' },
         { status: 403 }
       );
+    }
+
+    // Delete cover image from Cloudinary
+    if (trip.coverImageUrl) {
+      await deleteCloudinaryImage(trip.coverImageUrl);
     }
 
     await prisma.trip.delete({

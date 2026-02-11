@@ -8,6 +8,7 @@ interface Trip {
   id: string;
   title: string;
   description: string | null;
+  coverImageUrl: string | null;
   visibility: string;
   createdAt: string;
   updatedAt: string;
@@ -71,6 +72,9 @@ export default function TripsDrawer({
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editVisibility, setEditVisibility] = useState<'PRIVATE' | 'FRIENDS' | 'UNLISTED'>('PRIVATE');
+  const [editCoverFile, setEditCoverFile] = useState<File | null>(null);
+  const [editCoverPreview, setEditCoverPreview] = useState<string | null>(null);
+  const [editRemoveCover, setEditRemoveCover] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Delete state
@@ -156,6 +160,33 @@ export default function TripsDrawer({
     setEditTitle(trip.title);
     setEditDescription(trip.description || '');
     setEditVisibility(trip.visibility as 'PRIVATE' | 'FRIENDS' | 'UNLISTED');
+    setEditCoverFile(null);
+    setEditCoverPreview(null);
+    setEditRemoveCover(false);
+  };
+
+  const handleEditCoverChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const MAX_FILE_SIZE = 20 * 1024 * 1024;
+    const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+    if (file.size > MAX_FILE_SIZE) {
+      showError('File size exceeds 20MB limit');
+      e.target.value = '';
+      return;
+    }
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      showError('Only JPG, PNG, and WEBP images are allowed');
+      e.target.value = '';
+      return;
+    }
+
+    if (editCoverPreview) URL.revokeObjectURL(editCoverPreview);
+    setEditCoverFile(file);
+    setEditCoverPreview(URL.createObjectURL(file));
+    setEditRemoveCover(false);
   };
 
   const handleSaveEdit = async (e: FormEvent) => {
@@ -164,17 +195,48 @@ export default function TripsDrawer({
     setSaving(true);
 
     try {
+      let newCoverUrl: string | undefined;
+
+      // Upload new cover if selected
+      if (editCoverFile) {
+        const formData = new FormData();
+        formData.append('file', editCoverFile);
+        formData.append('upload_preset', process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!);
+        formData.append('folder', 'mappico');
+
+        const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+        const uploadResponse = await fetch(
+          `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+          { method: 'POST', body: formData }
+        );
+
+        if (!uploadResponse.ok) {
+          throw new Error('Failed to upload cover image');
+        }
+
+        const uploadData = await uploadResponse.json();
+        newCoverUrl = uploadData.secure_url;
+      }
+
+      const body: Record<string, unknown> = {
+        title: editTitle,
+        description: editDescription || null,
+        visibility: editVisibility,
+      };
+
+      if (editRemoveCover) {
+        body.removeCoverImage = true;
+      } else if (newCoverUrl) {
+        body.coverImageUrl = newCoverUrl;
+      }
+
       const response = await fetch(`/api/trips/${editingTripId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           ...getAuthHeaders(),
         },
-        body: JSON.stringify({
-          title: editTitle,
-          description: editDescription || null,
-          visibility: editVisibility,
-        }),
+        body: JSON.stringify(body),
       });
 
       const data = await response.json();
@@ -183,6 +245,12 @@ export default function TripsDrawer({
         showError(data.error || 'Failed to update trip');
         throw new Error(data.error);
       }
+
+      // Cleanup preview
+      if (editCoverPreview) URL.revokeObjectURL(editCoverPreview);
+      setEditCoverFile(null);
+      setEditCoverPreview(null);
+      setEditRemoveCover(false);
 
       success('Trip updated!');
       setEditingTripId(null);
@@ -336,6 +404,70 @@ export default function TripsDrawer({
                           <option value="FRIENDS">Friends</option>
                           <option value="UNLISTED">Anyone with link</option>
                         </select>
+
+                        {/* Cover photo section */}
+                        <div>
+                          <p className="text-xs font-medium text-gray-600 mb-1">Cover photo</p>
+                          {editCoverPreview ? (
+                            <div className="relative mb-1.5 w-full h-24 overflow-hidden rounded bg-slate-100">
+                              <img src={editCoverPreview} alt="New cover" className="h-full w-full object-cover block" />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  URL.revokeObjectURL(editCoverPreview);
+                                  setEditCoverFile(null);
+                                  setEditCoverPreview(null);
+                                }}
+                                disabled={saving}
+                                className="absolute top-1 right-1 bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-700 shadow text-xs"
+                              >
+                                x
+                              </button>
+                            </div>
+                          ) : !editRemoveCover && trip.coverImageUrl ? (
+                            <div className="relative mb-1.5 w-full h-24 overflow-hidden rounded bg-slate-100">
+                              <img src={trip.coverImageUrl} alt="Current cover" className="h-full w-full object-cover block" />
+                            </div>
+                          ) : null}
+                          <div className="flex gap-1.5">
+                            <label className="flex-1">
+                              <input
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
+                                onChange={handleEditCoverChange}
+                                disabled={saving}
+                                className="hidden"
+                              />
+                              <div className="w-full px-2 py-1.5 border border-gray-300 rounded text-gray-700 bg-white hover:bg-gray-50 cursor-pointer flex items-center justify-center text-xs font-medium transition-colors">
+                                {editCoverFile ? editCoverFile.name : 'Upload cover'}
+                              </div>
+                            </label>
+                            {(trip.coverImageUrl && !editRemoveCover && !editCoverFile) && (
+                              <button
+                                type="button"
+                                onClick={() => setEditRemoveCover(true)}
+                                disabled={saving}
+                                className="px-2 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded border border-red-200 font-medium transition-colors"
+                              >
+                                Remove
+                              </button>
+                            )}
+                            {editRemoveCover && (
+                              <button
+                                type="button"
+                                onClick={() => setEditRemoveCover(false)}
+                                disabled={saving}
+                                className="px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-50 rounded border border-gray-300 font-medium transition-colors"
+                              >
+                                Undo
+                              </button>
+                            )}
+                          </div>
+                          {editRemoveCover && (
+                            <p className="text-[10px] text-red-500 mt-0.5">Cover will be removed on save.</p>
+                          )}
+                        </div>
+
                         <div className="flex gap-2">
                           <button
                             type="submit"
@@ -346,7 +478,13 @@ export default function TripsDrawer({
                           </button>
                           <button
                             type="button"
-                            onClick={() => setEditingTripId(null)}
+                            onClick={() => {
+                              if (editCoverPreview) URL.revokeObjectURL(editCoverPreview);
+                              setEditCoverFile(null);
+                              setEditCoverPreview(null);
+                              setEditRemoveCover(false);
+                              setEditingTripId(null);
+                            }}
                             disabled={saving}
                             className="flex-1 bg-white text-gray-700 px-2 py-1.5 rounded border border-gray-300 text-sm font-medium hover:bg-gray-50"
                           >
@@ -365,10 +503,16 @@ export default function TripsDrawer({
                               : 'hover:bg-gray-50'
                           }`}
                         >
-                          {/* Avatar */}
-                          <div className={`h-10 w-10 rounded-full flex-shrink-0 flex items-center justify-center text-white font-semibold text-sm ${getAvatarColor(trip.id)}`}>
-                            {trip.title.charAt(0).toUpperCase()}
-                          </div>
+                          {/* Avatar / Cover */}
+                          {trip.coverImageUrl ? (
+                            <div className="h-10 w-10 rounded-full flex-shrink-0 overflow-hidden bg-slate-100">
+                              <img src={trip.coverImageUrl} alt="" className="h-full w-full object-cover" />
+                            </div>
+                          ) : (
+                            <div className={`h-10 w-10 rounded-full flex-shrink-0 flex items-center justify-center text-white font-semibold text-sm ${getAvatarColor(trip.id)}`}>
+                              {trip.title.charAt(0).toUpperCase()}
+                            </div>
+                          )}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between">
                               <p className={`text-sm font-medium truncate ${

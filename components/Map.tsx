@@ -45,6 +45,7 @@ interface Trip {
   id: string;
   title: string;
   description: string | null;
+  coverImageUrl: string | null;
   visibility: string;
   createdAt: string;
   updatedAt: string;
@@ -539,7 +540,7 @@ export default function MapComponent() {
     if (!file) return;
 
     // Client-side validation
-    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+    const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
     const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
     // Clear previous errors
@@ -547,7 +548,7 @@ export default function MapComponent() {
 
     // Validate file size
     if (file.size > MAX_FILE_SIZE) {
-      setFileValidationError("File size exceeds 5MB limit");
+      setFileValidationError("File size exceeds 20MB limit");
       e.target.value = ""; // Clear input
       return;
     }
@@ -648,11 +649,11 @@ export default function MapComponent() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const MAX_FILE_SIZE = 5 * 1024 * 1024;
+    const MAX_FILE_SIZE = 20 * 1024 * 1024;
     const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
     if (file.size > MAX_FILE_SIZE) {
-      setUpdateError("File size exceeds 5MB limit");
+      setUpdateError("File size exceeds 20MB limit");
       e.target.value = "";
       return;
     }
@@ -1167,7 +1168,7 @@ export default function MapComponent() {
               </label>
 
               <p className="mt-1 text-xs text-gray-500">
-                Only JPG, PNG, WEBP up to 5MB
+                Only JPG, PNG, WEBP up to 20MB
               </p>
 
               {fileValidationError && (
