@@ -3,6 +3,8 @@ import { getAuthUser } from '@/lib/apiAuth';
 import { prisma } from '@/lib/prisma';
 import { v2 as cloudinary } from 'cloudinary';
 import { broadcastToUsers } from '@/lib/sseClients';
+import { pointUpdateSchema } from '@/lib/validators';
+import { rateLimit, createAuthRateLimitKey } from '@/lib/rateLimit';
 
 // Configure Cloudinary
 cloudinary.config({
@@ -125,6 +127,173 @@ export async function DELETE(
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error('DELETE /api/points/:id error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+// PATCH /api/points/:id - Update point
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const authResult = getAuthUser(request);
+
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
+  const { userId } = authResult;
+  const { id: pointId } = await params;
+
+  // Rate limiting
+  const rateLimitKey = createAuthRateLimitKey(userId, '/api/points');
+  const rateLimitResult = rateLimit({
+    key: rateLimitKey,
+    limit: 20,
+    windowMs: 60 * 1000, // 1 minute
+  });
+
+  if (!rateLimitResult.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests. Try again in a minute.' },
+      {
+        status: 429,
+        headers: {
+          'Retry-After': rateLimitResult.retryAfterSec.toString(),
+          'X-RateLimit-Limit': rateLimitResult.limit.toString(),
+          'X-RateLimit-Remaining': '0',
+        },
+      }
+    );
+  }
+
+  try {
+    // Parse and validate request body
+    const body = await request.json();
+    const validatedData = pointUpdateSchema.parse(body);
+
+    // Validate at least one field is present
+    if (!validatedData.title && !validatedData.description && !validatedData.category) {
+      return NextResponse.json(
+        { error: 'At least one field (title, description, or category) must be provided' },
+        { status: 400 }
+      );
+    }
+
+    // Find the point
+    const point = await prisma.point.findUnique({
+      where: { id: pointId },
+      select: {
+        id: true,
+        userId: true,
+      },
+    });
+
+    // Check if point exists
+    if (!point) {
+      return NextResponse.json(
+        { error: 'Point not found' },
+        { status: 404 }
+      );
+    }
+
+    // Check if user is the owner
+    if (point.userId !== userId) {
+      return NextResponse.json(
+        { error: 'Forbidden: You can only edit your own points' },
+        { status: 403 }
+      );
+    }
+
+    // Update the point
+    const updatedPoint = await prisma.point.update({
+      where: { id: pointId },
+      data: {
+        ...(validatedData.title && { title: validatedData.title }),
+        ...(validatedData.description !== undefined && { description: validatedData.description }),
+        ...(validatedData.category && { category: validatedData.category }),
+      },
+      select: {
+        id: true,
+        lat: true,
+        lng: true,
+        title: true,
+        description: true,
+        photoUrl: true,
+        category: true,
+        createdAt: true,
+        user: {
+          select: {
+            email: true,
+          },
+        },
+      },
+    });
+
+    console.log(`Point updated: ${pointId} by user ${userId}`);
+
+    // Broadcast to friends via SSE
+    try {
+      // Find all accepted friends
+      const friendRequests = await prisma.friendRequest.findMany({
+        where: {
+          OR: [
+            { fromUserId: userId, status: 'accepted' },
+            { toUserId: userId, status: 'accepted' },
+          ],
+        },
+        select: {
+          fromUserId: true,
+          toUserId: true,
+        },
+      });
+
+      // Extract friend IDs
+      const friendIds = friendRequests.map((req) => {
+        if (req.fromUserId === userId) {
+          return req.toUserId;
+        } else {
+          return req.fromUserId;
+        }
+      });
+
+      // Broadcast to friends
+      if (friendIds.length > 0) {
+        broadcastToUsers(friendIds, 'point_updated', {
+          point: {
+            id: updatedPoint.id,
+            userId: userId,
+            userEmail: updatedPoint.user.email,
+            lat: updatedPoint.lat,
+            lng: updatedPoint.lng,
+            title: updatedPoint.title,
+            description: updatedPoint.description,
+            photoUrl: updatedPoint.photoUrl,
+            category: updatedPoint.category,
+            createdAt: updatedPoint.createdAt.toISOString(),
+          },
+        });
+      }
+    } catch (broadcastError) {
+      // Log but don't fail the request
+      console.error('[PATCH POINT] SSE broadcast error:', broadcastError);
+    }
+
+    return NextResponse.json({ point: updatedPoint });
+  } catch (error) {
+    console.error('PATCH /api/points/:id error:', error);
+
+    // Handle Zod validation errors
+    if (error instanceof Error && error.name === 'ZodError') {
+      return NextResponse.json(
+        { error: 'Invalid request data' },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

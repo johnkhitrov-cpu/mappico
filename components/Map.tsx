@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Map, { NavigationControl, Marker } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { getAuthHeaders } from "@/lib/clientAuth";
 import { useGlobalToast } from "./ClientLayout";
 import { useOnboarding } from "@/lib/useOnboarding";
 import { useAnalytics } from "@/lib/analytics";
+import FriendsDrawer from './FriendsDrawer';
 
 interface Point {
   id: string;
@@ -52,6 +53,13 @@ interface ClickedCoords {
 }
 
 type SelectedPoint = (Point & { isMine: true }) | (FriendPoint & { isMine: false });
+
+interface IncomingRequest {
+  id: string;
+  fromUserId: string;
+  fromUserEmail: string;
+  createdAt: string;
+}
 
 // Helper: Get marker color based on category
 function getCategoryColor(category: 'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER' | undefined): string {
@@ -127,10 +135,24 @@ export default function MapComponent() {
   const [deleteError, setDeleteError] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Edit state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editCategory, setEditCategory] = useState<'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER'>('PLACE');
+  const [updating, setUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState("");
+
   // Filter state
   const [showMyPoints, setShowMyPoints] = useState(true);
   const [showFriendsPoints, setShowFriendsPoints] = useState(true);
   const [selectedFriendId, setSelectedFriendId] = useState<string>("all");
+  const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
+  const filtersRef = useRef<HTMLDivElement>(null);
+
+  // Friends drawer state
+  const [showFriendsDrawer, setShowFriendsDrawer] = useState(false);
+  const [incomingRequests, setIncomingRequests] = useState<IncomingRequest[]>([]);
 
   // Geolocation state
   const [locatingUser, setLocatingUser] = useState(false);
@@ -142,6 +164,7 @@ export default function MapComponent() {
   useEffect(() => {
     fetchAllData();
     fetchTrips();
+    fetchIncomingRequests();
   }, []);
 
   // Fetch trips for dropdown
@@ -159,6 +182,7 @@ export default function MapComponent() {
       setTripsLoading(false);
     }
   };
+
 
   // Subscribe to SSE for real-time updates
   useEffect(() => {
@@ -213,6 +237,22 @@ export default function MapComponent() {
           }
         });
 
+        eventSource.addEventListener("point_updated", (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            const updatedPoint: FriendPoint = data.point;
+
+            // Update point in friend points
+            setFriendPoints((prev) =>
+              prev.map((p) => p.id === updatedPoint.id ? updatedPoint : p)
+            );
+
+            console.log("Point updated via SSE:", updatedPoint.title);
+          } catch (parseError) {
+            console.error("Failed to parse SSE point_updated event:", parseError);
+          }
+        });
+
         eventSource.onerror = (error) => {
           console.error("SSE error:", error);
           eventSource?.close();
@@ -242,6 +282,40 @@ export default function MapComponent() {
     };
   }, []);
 
+  // Close filters dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (filtersRef.current && !filtersRef.current.contains(e.target as Node)) {
+        setShowFiltersDropdown(false);
+      }
+    };
+
+    if (showFiltersDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showFiltersDropdown]);
+
+  // Close filters dropdown on ESC key
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowFiltersDropdown(false);
+      }
+    };
+
+    if (showFiltersDropdown) {
+      document.addEventListener('keydown', handleEsc);
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, [showFiltersDropdown]);
+
   const fetchAllData = async () => {
     setLoading(true);
     setError("");
@@ -267,6 +341,20 @@ export default function MapComponent() {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchIncomingRequests = async () => {
+    try {
+      const response = await fetch("/api/friends/incoming", {
+        headers: getAuthHeaders()
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setIncomingRequests(data.requests);
+      }
+    } catch (err) {
+      console.error("Failed to fetch incoming requests:", err);
     }
   };
 
@@ -520,6 +608,72 @@ export default function MapComponent() {
     }
   };
 
+  const handleEditClick = () => {
+    if (!selectedPoint || !selectedPoint.isMine) return;
+
+    setEditTitle(selectedPoint.title);
+    setEditDescription(selectedPoint.description || "");
+    setEditCategory(selectedPoint.category);
+    setIsEditing(true);
+    setUpdateError("");
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setUpdateError("");
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selectedPoint || !selectedPoint.isMine) return;
+
+    if (!editTitle.trim()) {
+      setUpdateError("Title is required");
+      return;
+    }
+
+    setUpdating(true);
+    setUpdateError("");
+
+    try {
+      const response = await fetch(`/api/points/${selectedPoint.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          title: editTitle,
+          description: editDescription || undefined,
+          category: editCategory,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to update point");
+      }
+
+      // Update local state
+      setMyPoints(prev =>
+        prev.map(p => p.id === selectedPoint.id ? data.point : p)
+      );
+
+      // Update selected point
+      setSelectedPoint({ ...data.point, isMine: true });
+
+      // Exit edit mode
+      setIsEditing(false);
+
+      success("Point updated successfully!");
+    } catch (err: any) {
+      setUpdateError(err.message);
+      showError(err.message);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const handleMyLocation = () => {
     if (!navigator.geolocation) {
       showError("Geolocation is not supported by your browser");
@@ -568,6 +722,18 @@ export default function MapComponent() {
         maximumAge: 0,
       }
     );
+  };
+
+  const handleFriendClick = (friendId: string) => {
+    setSelectedFriendId(friendId);
+    setShowFriendsPoints(true);
+    setShowMyPoints(false);
+    setShowFiltersDropdown(false);
+  };
+
+  const handleRefreshFriends = () => {
+    fetchAllData();
+    fetchIncomingRequests();
   };
 
   // Compute visible points based on filters
@@ -619,60 +785,74 @@ export default function MapComponent() {
         </div>
       )}
 
-      {/* Filter Panel */}
-      <div className="absolute top-4 left-4 bg-white rounded-lg shadow-xl p-4 w-64 z-20">
-        <h3 className="text-sm font-bold text-gray-900 mb-3">Filters</h3>
+      {/* Filters button + dropdown */}
+      <div ref={filtersRef} className="absolute top-4 left-4 z-20">
+        <button
+          onClick={() => setShowFiltersDropdown(!showFiltersDropdown)}
+          className="bg-white text-gray-800 px-4 py-2 rounded-lg shadow-lg hover:bg-gray-50 font-medium text-sm transition-colors flex items-center gap-2"
+        >
+          <span>Filters</span>
+          <span className="text-xs">{showFiltersDropdown ? '▲' : '▼'}</span>
+        </button>
 
-        <div className="space-y-3">
-          {/* Show my points checkbox */}
-          <label className="flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showMyPoints}
-              onChange={(e) => setShowMyPoints(e.target.checked)}
-              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-            />
-            <span className="ml-2 text-sm text-gray-700">Show my points</span>
-          </label>
+        {showFiltersDropdown && (
+          <div className="absolute top-12 left-0 bg-white rounded-lg shadow-xl p-4 w-64">
+            <h3 className="text-sm font-bold text-gray-900 mb-3">Filters</h3>
 
-          {/* Show friends points checkbox */}
-          <label className="flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showFriendsPoints}
-              onChange={(e) => setShowFriendsPoints(e.target.checked)}
-              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-            />
-            <span className="ml-2 text-sm text-gray-700">Show friends points</span>
-          </label>
-
-          {/* Friend selector dropdown */}
-          {showFriendsPoints && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Friend
+            {/* Show my points checkbox */}
+            <div className="mb-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showMyPoints}
+                  onChange={(e) => setShowMyPoints(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">Show my points</span>
               </label>
-              <select
-                value={selectedFriendId}
-                onChange={(e) => setSelectedFriendId(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">All friends</option>
-                {friends.map((friend) => (
-                  <option key={friend.id} value={friend.id}>
-                    {friend.email}
-                  </option>
-                ))}
-              </select>
             </div>
-          )}
-        </div>
 
-        {/* Stats */}
-        <div className="mt-4 pt-3 border-t border-gray-200 text-xs text-gray-500">
-          <div>My points: {myPoints.length}</div>
-          <div>Friends points: {friendPoints.length}</div>
-        </div>
+            {/* Show friends points checkbox */}
+            <div className="mb-3">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showFriendsPoints}
+                  onChange={(e) => setShowFriendsPoints(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">Show friends points</span>
+              </label>
+            </div>
+
+            {/* Friend selector (only if friends points enabled) */}
+            {showFriendsPoints && friends.length > 0 && (
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Friend
+                </label>
+                <select
+                  value={selectedFriendId}
+                  onChange={(e) => setSelectedFriendId(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">All friends</option>
+                  {friends.map((friend) => (
+                    <option key={friend.id} value={friend.id}>
+                      {friend.email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Counters */}
+            <div className="pt-3 border-t border-gray-200 text-xs text-gray-600 space-y-1">
+              <div>My points: <span className="font-medium">{myPoints.length}</span></div>
+              <div>Friends points: <span className="font-medium">{friendPoints.length}</span></div>
+            </div>
+          </div>
+        )}
       </div>
 
       <Map
@@ -684,6 +864,21 @@ export default function MapComponent() {
         mapStyle="mapbox://styles/mapbox/streets-v12"
       >
         <NavigationControl position="top-right" />
+
+        {/* Friends drawer button */}
+        <div className="absolute bottom-4 left-4 z-10">
+          <button
+            onClick={() => setShowFriendsDrawer(true)}
+            className="bg-white hover:bg-gray-100 text-gray-700 rounded-lg px-4 py-2 shadow-lg font-medium text-sm transition-colors"
+          >
+            👥 Friends
+            {incomingRequests.length > 0 && (
+              <span className="ml-2 bg-red-500 text-white text-xs rounded-full px-2 py-0.5">
+                {incomingRequests.length}
+              </span>
+            )}
+          </button>
+        </div>
 
         {/* My Location button */}
         <div className="absolute bottom-4 right-4 z-10">
@@ -933,10 +1128,13 @@ export default function MapComponent() {
       {selectedPoint && (
         <div className="absolute top-4 left-4 right-4 md:top-4 md:right-4 md:left-auto bg-white rounded-lg shadow-xl p-4 md:w-80 z-20 max-h-[calc(100vh-2rem)] overflow-y-auto">
           <div className="flex justify-between items-start mb-3">
-            <h3 className="text-lg font-bold text-gray-900">{selectedPoint.title}</h3>
+            <h3 className="text-lg font-bold text-gray-900">
+              {isEditing ? "Edit Point" : selectedPoint.title}
+            </h3>
             <button
               onClick={() => {
                 setSelectedPoint(null);
+                setIsEditing(false);
                 setShowDeleteConfirm(false);
                 setDeleteError("");
               }}
@@ -946,8 +1144,8 @@ export default function MapComponent() {
             </button>
           </div>
 
-          {/* Show author for friend points */}
-          {!selectedPoint.isMine && (
+          {/* Show author for friend points (not in edit mode) */}
+          {!selectedPoint.isMine && !isEditing && (
             <div className="mb-3">
               <p className="text-xs text-gray-500">
                 by: <span className="font-medium text-gray-700">{selectedPoint.userEmail}</span>
@@ -955,78 +1153,175 @@ export default function MapComponent() {
             </div>
           )}
 
-          {selectedPoint.photoUrl && (
-            <div className="mb-3">
-              <img
-                src={selectedPoint.photoUrl}
-                alt={selectedPoint.title}
-                className="w-full h-48 object-cover rounded-md"
-              />
-            </div>
-          )}
-
-          {selectedPoint.description && (
-            <div className="mb-3">
-              <p className="text-sm text-gray-700 whitespace-pre-wrap">
-                {selectedPoint.description}
-              </p>
-            </div>
-          )}
-
-          <div className="text-xs text-gray-500 mb-3">
-            {new Date(selectedPoint.createdAt).toLocaleDateString()}
-          </div>
-
-          {/* Delete button - only for owned points */}
-          {selectedPoint.isMine && !showDeleteConfirm && (
-            <div>
-              <button
-                onClick={() => setShowDeleteConfirm(true)}
-                disabled={deleting}
-                className="w-full bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium text-sm"
-              >
-                Delete Point
-              </button>
-            </div>
-          )}
-
-          {/* Delete confirmation */}
-          {selectedPoint.isMine && showDeleteConfirm && (
-            <div className="border-t pt-3">
-              <p className="text-sm text-gray-700 mb-3">
-                Are you sure you want to delete this point?
-                {selectedPoint.photoUrl && " The photo will also be deleted from Cloudinary."}
-              </p>
-
-              {deleteError && (
-                <div className="mb-3 bg-red-50 p-2 rounded">
-                  <p className="text-sm text-red-600">{deleteError}</p>
+          {/* EDIT MODE */}
+          {isEditing ? (
+            <div className="space-y-3">
+              {updateError && (
+                <div className="bg-red-50 p-2 rounded-md">
+                  <p className="text-sm text-red-600">{updateError}</p>
                 </div>
               )}
 
-              <div className="flex gap-2">
-                <button
-                  onClick={handleDeletePoint}
-                  disabled={deleting}
-                  className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium text-sm"
+              {/* Title Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Title <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  maxLength={80}
+                  disabled={updating}
+                  className="w-full px-4 py-3 h-12 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                />
+              </div>
+
+              {/* Description Textarea */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Description
+                </label>
+                <textarea
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  maxLength={500}
+                  rows={3}
+                  disabled={updating}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                />
+              </div>
+
+              {/* Category Select */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Category
+                </label>
+                <select
+                  value={editCategory}
+                  onChange={(e) => setEditCategory(e.target.value as any)}
+                  disabled={updating}
+                  className="w-full px-4 py-3 h-12 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
                 >
-                  {deleting ? "Deleting..." : "Yes, Delete"}
+                  <option value="PLACE">📍 Interesting place</option>
+                  <option value="FOOD">🍜 Food</option>
+                  <option value="STAY">🏨 Stay</option>
+                  <option value="ACTIVITY">🎟️ Activity</option>
+                  <option value="OTHER">✨ Other</option>
+                </select>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={updating || !editTitle.trim()}
+                  className="flex-1 bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 disabled:bg-slate-400 disabled:cursor-not-allowed font-medium text-sm"
+                >
+                  {updating ? "Saving..." : "Save Changes"}
                 </button>
                 <button
-                  onClick={() => {
-                    setShowDeleteConfirm(false);
-                    setDeleteError("");
-                  }}
-                  disabled={deleting}
-                  className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium text-sm"
+                  onClick={handleCancelEdit}
+                  disabled={updating}
+                  className="flex-1 bg-white text-gray-700 px-4 py-2 rounded-md border border-gray-300 hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium text-sm"
                 >
                   Cancel
                 </button>
               </div>
             </div>
+          ) : (
+            /* VIEW MODE */
+            <>
+              {selectedPoint.photoUrl && (
+                <div className="mb-3">
+                  <img
+                    src={selectedPoint.photoUrl}
+                    alt={selectedPoint.title}
+                    className="w-full h-48 object-cover rounded-md"
+                  />
+                </div>
+              )}
+
+              {selectedPoint.description && (
+                <div className="mb-3">
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                    {selectedPoint.description}
+                  </p>
+                </div>
+              )}
+
+              <div className="text-xs text-gray-500 mb-3">
+                {new Date(selectedPoint.createdAt).toLocaleDateString()}
+              </div>
+
+              {/* Edit + Delete buttons - only for owned points */}
+              {selectedPoint.isMine && !showDeleteConfirm && (
+                <div className="space-y-2">
+                  <button
+                    onClick={handleEditClick}
+                    className="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 font-medium text-sm"
+                  >
+                    Edit Point
+                  </button>
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    disabled={deleting}
+                    className="w-full bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium text-sm"
+                  >
+                    Delete Point
+                  </button>
+                </div>
+              )}
+
+              {/* Delete confirmation */}
+              {selectedPoint.isMine && showDeleteConfirm && (
+                <div className="border-t pt-3">
+                  <p className="text-sm text-gray-700 mb-3">
+                    Are you sure you want to delete this point?
+                    {selectedPoint.photoUrl && " The photo will also be deleted from Cloudinary."}
+                  </p>
+
+                  {deleteError && (
+                    <div className="mb-3 bg-red-50 p-2 rounded">
+                      <p className="text-sm text-red-600">{deleteError}</p>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleDeletePoint}
+                      disabled={deleting}
+                      className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium text-sm"
+                    >
+                      {deleting ? "Deleting..." : "Yes, Delete"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowDeleteConfirm(false);
+                        setDeleteError("");
+                      }}
+                      disabled={deleting}
+                      className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium text-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
+
+      {/* Friends Drawer */}
+      <FriendsDrawer
+        isOpen={showFriendsDrawer}
+        onClose={() => setShowFriendsDrawer(false)}
+        friends={friends}
+        incomingRequests={incomingRequests}
+        onFriendClick={handleFriendClick}
+        onRefreshFriends={handleRefreshFriends}
+      />
     </div>
   );
 }
