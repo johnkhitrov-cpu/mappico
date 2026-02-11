@@ -16,6 +16,7 @@ export const pointCreateSchema = z.object({
   title: z.string().min(1, 'Title is required').max(80, 'Title must be at most 80 characters'),
   description: z.string().max(500, 'Description must be at most 500 characters').optional(),
   photoUrl: z.string().url('Photo URL must be a valid URL').optional(),
+  category: z.enum(['PLACE', 'FOOD', 'STAY', 'ACTIVITY', 'OTHER']).default('PLACE'),
 });
 
 export const tripCreateSchema = z.object({

@@ -10,6 +10,14 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum PointCategory {
+  PLACE
+  FOOD
+  STAY
+  ACTIVITY
+  OTHER
+}
+
 model User {
   id            String          @id @default(cuid())
   email         String          @unique
@@ -23,14 +31,15 @@ model User {
 }
 
 model Point {
-  id          String   @id @default(cuid())
+  id          String        @id @default(cuid())
   userId      String
   lat         Float
   lng         Float
   title       String
   description String?
   photoUrl    String?
-  createdAt   DateTime @default(now())
+  category    PointCategory @default(PLACE)
+  createdAt   DateTime      @default(now())
 
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   tripPoints  TripPoint[]

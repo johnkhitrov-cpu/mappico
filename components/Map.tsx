@@ -15,6 +15,7 @@ interface Point {
   title: string;
   description: string | null;
   photoUrl: string | null;
+  category: 'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER';
   createdAt: string;
 }
 
@@ -27,6 +28,7 @@ interface FriendPoint {
   title: string;
   description: string | null;
   photoUrl: string | null;
+  category: 'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER';
   createdAt: string;
 }
 
@@ -50,6 +52,46 @@ interface ClickedCoords {
 }
 
 type SelectedPoint = (Point & { isMine: true }) | (FriendPoint & { isMine: false });
+
+// Helper: Get marker color based on category
+function getCategoryColor(category: 'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER' | undefined): string {
+  if (!category) return 'bg-emerald-500';  // Legacy points
+
+  switch (category) {
+    case 'PLACE':
+      return 'bg-emerald-500';
+    case 'FOOD':
+      return 'bg-orange-500';
+    case 'STAY':
+      return 'bg-indigo-500';
+    case 'ACTIVITY':
+      return 'bg-purple-500';
+    case 'OTHER':
+      return 'bg-slate-500';
+    default:
+      return 'bg-emerald-500';
+  }
+}
+
+// Helper: Get emoji based on category
+function getCategoryEmoji(category: 'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER' | undefined): string {
+  if (!category) return '📍';
+
+  switch (category) {
+    case 'PLACE':
+      return '📍';
+    case 'FOOD':
+      return '🍜';
+    case 'STAY':
+      return '🏨';
+    case 'ACTIVITY':
+      return '🎟️';
+    case 'OTHER':
+      return '✨';
+    default:
+      return '📍';
+  }
+}
 
 export default function MapComponent() {
   const { success, error: showError } = useGlobalToast();
@@ -80,6 +122,7 @@ export default function MapComponent() {
   const [uploading, setUploading] = useState(false);
   const [fileValidationError, setFileValidationError] = useState("");
   const [selectedPoint, setSelectedPoint] = useState<SelectedPoint | null>(null);
+  const [category, setCategory] = useState<'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER'>('PLACE');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -233,6 +276,7 @@ export default function MapComponent() {
     setTitle("");
     setDescription("");
     setSelectedTripId(null);
+    setCategory('PLACE');
     setSaveError("");
     setSelectedFile(null);
     setPreviewUrl(null);
@@ -299,6 +343,7 @@ export default function MapComponent() {
           title,
           description: description || undefined,
           photoUrl,
+          category,
         }),
       });
 
@@ -671,14 +716,14 @@ export default function MapComponent() {
             anchor="bottom"
           >
             <div
-              className="bg-blue-600 rounded-full w-6 h-6 flex items-center justify-center text-white text-xs font-bold shadow-lg cursor-pointer hover:bg-blue-700"
+              className={`${getCategoryColor(point.category)} rounded-full w-9 h-9 flex items-center justify-center text-white text-lg shadow-lg cursor-pointer hover:scale-110 transition-transform ring-2 ring-white`}
               title={point.title}
               onClick={(e) => {
                 e.stopPropagation();
                 setSelectedPoint({ ...point, isMine: true });
               }}
             >
-              📍
+              {getCategoryEmoji(point.category)}
             </div>
           </Marker>
         ))}
@@ -692,14 +737,14 @@ export default function MapComponent() {
             anchor="bottom"
           >
             <div
-              className="bg-green-600 rounded-full w-6 h-6 flex items-center justify-center text-white text-xs font-bold shadow-lg cursor-pointer hover:bg-green-700"
+              className={`${getCategoryColor(point.category)} rounded-full w-9 h-9 flex items-center justify-center text-white text-lg shadow-lg cursor-pointer hover:scale-110 transition-transform ring-2 ring-white opacity-80`}
               title={`${point.title} (by ${point.userEmail})`}
               onClick={(e) => {
                 e.stopPropagation();
                 setSelectedPoint({ ...point, isMine: false });
               }}
             >
-              📍
+              {getCategoryEmoji(point.category)}
             </div>
           </Marker>
         ))}
@@ -711,7 +756,7 @@ export default function MapComponent() {
             latitude={clickedCoords.lat}
             anchor="bottom"
           >
-            <div className="bg-red-600 rounded-full w-6 h-6 flex items-center justify-center text-white text-xs font-bold shadow-lg">
+            <div className="bg-red-600 rounded-full w-9 h-9 flex items-center justify-center text-white text-lg shadow-lg ring-2 ring-white animate-pulse">
               📍
             </div>
           </Marker>
@@ -754,7 +799,7 @@ export default function MapComponent() {
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Enter title"
                 maxLength={80}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-3 h-12 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
               />
             </div>
 
@@ -768,7 +813,7 @@ export default function MapComponent() {
                 placeholder="Optional description"
                 maxLength={500}
                 rows={3}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
               />
             </div>
 
@@ -787,7 +832,7 @@ export default function MapComponent() {
                   value={selectedTripId || ""}
                   onChange={(e) => setSelectedTripId(e.target.value || null)}
                   disabled={saving || uploading}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 h-12 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
                 >
                   <option value="">None</option>
                   {trips.map((trip) => (
@@ -801,35 +846,62 @@ export default function MapComponent() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
+                Category
+              </label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value as 'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER')}
+                disabled={saving || uploading}
+                className="w-full px-4 py-3 h-12 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+              >
+                <option value="PLACE">📍 Interesting place</option>
+                <option value="FOOD">🍜 Food</option>
+                <option value="STAY">🏨 Stay</option>
+                <option value="ACTIVITY">🎟️ Activity</option>
+                <option value="OTHER">✨ Other</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
                 Photo (optional)
               </label>
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={handleFileChange}
-                disabled={saving || uploading}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-              />
+
+              <label className="block">
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleFileChange}
+                  disabled={saving || uploading}
+                  className="hidden"
+                />
+                <div className="w-full px-4 py-3 h-12 border border-gray-300 rounded-xl text-gray-700 bg-white hover:bg-gray-50 cursor-pointer flex items-center justify-center font-medium transition-colors shadow-sm">
+                  {selectedFile ? selectedFile.name : '📷 Upload photo'}
+                </div>
+              </label>
+
               <p className="mt-1 text-xs text-gray-500">
                 Only JPG, PNG, WEBP up to 5MB
               </p>
+
               {fileValidationError && (
-                <div className="mt-2 bg-red-50 p-2 rounded">
+                <div className="mt-2 bg-red-50 p-2 rounded-xl">
                   <p className="text-sm text-red-600">{fileValidationError}</p>
                 </div>
               )}
+
               {previewUrl && (
-                <div className="mt-2 relative">
+                <div className="mt-3 relative">
                   <img
                     src={previewUrl}
                     alt="Preview"
-                    className="w-full h-32 object-cover rounded-md"
+                    className="w-full h-32 object-cover rounded-xl shadow-sm"
                   />
                   <button
                     type="button"
                     onClick={handleRemoveFile}
                     disabled={saving || uploading}
-                    className="absolute top-1 right-1 bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-700 disabled:bg-red-400"
+                    className="absolute top-2 right-2 bg-red-600 text-white rounded-full w-7 h-7 flex items-center justify-center hover:bg-red-700 disabled:bg-red-400 shadow-lg"
                   >
                     ×
                   </button>
@@ -837,18 +909,18 @@ export default function MapComponent() {
               )}
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-3">
               <button
                 onClick={handleSavePoint}
                 disabled={saving || uploading || !title.trim()}
-                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed font-medium"
+                className="flex-1 bg-slate-900 text-white px-4 py-3 h-12 rounded-xl hover:bg-slate-800 disabled:bg-slate-400 disabled:cursor-not-allowed font-medium shadow-sm transition-colors"
               >
                 {uploading ? "Uploading..." : saving ? "Saving..." : "Save Point"}
               </button>
               <button
                 onClick={handleCancelPoint}
                 disabled={saving || uploading}
-                className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium"
+                className="flex-1 bg-white text-gray-700 px-4 py-3 h-12 rounded-xl border border-gray-300 hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium shadow-sm transition-colors"
               >
                 Cancel
               </button>
