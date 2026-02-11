@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { useGlobalToast } from "./ClientLayout";
+import { getFeedbackUrl } from "@/lib/analytics";
 
 export default function Navigation() {
   const pathname = usePathname();
@@ -78,12 +79,23 @@ export default function Navigation() {
               </Link>
             ))}
             {isLoggedIn && (
-              <button
-                onClick={handleLogout}
-                className="px-3 py-2 rounded-md text-sm font-medium text-gray-300 hover:bg-red-700 hover:text-white transition-colors"
-              >
-                Logout
-              </button>
+              <>
+                <a
+                  href={getFeedbackUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-2 rounded-md text-sm font-medium text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+                  title="Send us your feedback"
+                >
+                  Feedback
+                </a>
+                <button
+                  onClick={handleLogout}
+                  className="px-3 py-2 rounded-md text-sm font-medium text-gray-300 hover:bg-red-700 hover:text-white transition-colors"
+                >
+                  Logout
+                </button>
+              </>
             )}
           </div>
         </div>

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import Navigation from "@/components/Navigation";
 import { ClientLayout } from "@/components/ClientLayout";
+import { AnalyticsProvider } from "@/lib/analytics";
 
 export const metadata: Metadata = {
   title: "Mappico",
@@ -16,10 +17,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <ClientLayout>
-          <Navigation />
-          {children}
-        </ClientLayout>
+        <AnalyticsProvider>
+          <ClientLayout>
+            <Navigation />
+            {children}
+          </ClientLayout>
+        </AnalyticsProvider>
       </body>
     </html>
   );

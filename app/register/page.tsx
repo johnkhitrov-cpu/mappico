@@ -4,10 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useToast, ToastContainer } from "@/components/Toast";
+import { useAnalytics } from "@/lib/analytics";
 
 export default function RegisterPage() {
   const router = useRouter();
   const { toasts, removeToast, success: showSuccess, error: showError } = useToast();
+  const { trackEvent } = useAnalytics();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -42,6 +44,7 @@ export default function RegisterPage() {
       }
 
       setSuccess(true);
+      trackEvent('sign_up', { method: 'email' });
       showSuccess("Registration successful! Redirecting to login...");
       setTimeout(() => {
         router.push("/login");

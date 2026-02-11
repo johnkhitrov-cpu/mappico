@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import Map, { Marker } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import PointDetailsModal from "@/components/PointDetailsModal";
+import { useAnalytics } from "@/lib/analytics";
 
 interface Trip {
   id: string;
@@ -43,6 +44,7 @@ export default function SharedTripPage() {
   const router = useRouter();
   const params = useParams();
   const token = params.token as string;
+  const { trackEvent } = useAnalytics();
 
   const [trip, setTrip] = useState<Trip | null>(null);
   const [loading, setLoading] = useState(true);
@@ -86,6 +88,11 @@ export default function SharedTripPage() {
       const data = await response.json();
       setTrip(data.trip);
       setTripPoints(data.tripPoints || []);
+
+      // Track shared trip open
+      trackEvent('open_shared_trip', {
+        has_points: (data.tripPoints || []).length > 0
+      });
 
       // Auto-center map on first point if available
       if (data.tripPoints && data.tripPoints.length > 0) {

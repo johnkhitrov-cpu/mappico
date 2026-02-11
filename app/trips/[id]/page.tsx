@@ -9,6 +9,8 @@ import Map, { Marker } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import PointDetailsModal from "@/components/PointDetailsModal";
 import { TripDetailHeaderSkeleton, PointCardSkeleton, MapSkeleton } from "@/components/Skeleton";
+import { useOnboarding } from "@/lib/useOnboarding";
+import { useAnalytics } from "@/lib/analytics";
 
 interface Trip {
   id: string;
@@ -49,6 +51,8 @@ export default function TripDetailPage() {
   const params = useParams();
   const tripId = params.id as string;
   const { success, error: showError } = useGlobalToast();
+  const { shouldShowOnboarding } = useOnboarding();
+  const { trackEvent } = useAnalytics();
 
   const [trip, setTrip] = useState<Trip | null>(null);
   const [loading, setLoading] = useState(true);
@@ -283,6 +287,11 @@ export default function TripDetailPage() {
       await navigator.clipboard.writeText(data.shareUrl);
 
       success("Share link copied to clipboard!");
+
+      // Track share link copy
+      trackEvent('copy_share_link', {
+        trip_visibility: trip!.visibility
+      });
     } catch (err) {
       console.error("Generate share link error:", err);
     } finally {
@@ -385,13 +394,20 @@ export default function TripDetailPage() {
                     : "This trip has no points yet."}
                 </p>
                 {trip.isOwner ? (
-                  <p className="text-sm text-gray-400">
-                    Go to{" "}
-                    <a href="/map" className="text-blue-600 hover:underline">
-                      /map
-                    </a>{" "}
-                    and create points with this trip selected.
-                  </p>
+                  shouldShowOnboarding ? (
+                    <p className="text-sm text-gray-600">
+                      Add places on the map and select this trip in the dropdown.
+                      When ready, share your trip with friends or by link.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-gray-400">
+                      Go to{" "}
+                      <a href="/map" className="text-blue-600 hover:underline">
+                        /map
+                      </a>{" "}
+                      and create points with this trip selected.
+                    </p>
+                  )
                 ) : (
                   <p className="text-sm text-gray-400">
                     The owner hasn't added places yet.

@@ -6,6 +6,8 @@ import AuthGuard from "@/components/AuthGuard";
 import { getAuthHeaders } from "@/lib/clientAuth";
 import { useGlobalToast } from "@/components/ClientLayout";
 import { TripCardSkeleton } from "@/components/Skeleton";
+import { useOnboarding } from "@/lib/useOnboarding";
+import { useAnalytics } from "@/lib/analytics";
 
 interface Trip {
   id: string;
@@ -23,6 +25,8 @@ interface Trip {
 export default function TripsPage() {
   const router = useRouter();
   const { success, error: showError } = useGlobalToast();
+  const { shouldShowOnboarding, markOnboardingComplete } = useOnboarding();
+  const { trackEvent } = useAnalytics();
 
   const [trips, setTrips] = useState<Trip[]>([]);
   const [sharedTrips, setSharedTrips] = useState<Trip[]>([]);
@@ -112,10 +116,12 @@ export default function TripsPage() {
       }
 
       success("Trip created successfully!");
+      trackEvent('create_trip', { visibility: data.trip.visibility });
       setTitle("");
       setDescription("");
       setVisibility("PRIVATE");
       setShowCreateForm(false);
+      markOnboardingComplete(); // Mark onboarding as complete
       fetchTrips();
     } catch (err) {
       console.error("Create trip error:", err);
@@ -221,9 +227,18 @@ export default function TripsPage() {
                 <TripCardSkeleton />
               </div>
             ) : trips.length === 0 ? (
-              <p className="text-gray-600 text-center py-4">
-                No trips yet. Create your first trip above!
-              </p>
+              <div className="text-center py-8">
+                <p className="text-gray-700 text-lg font-medium mb-2">
+                  {shouldShowOnboarding
+                    ? "Start by creating your first trip."
+                    : "No trips yet."}
+                </p>
+                <p className="text-gray-600 text-sm">
+                  {shouldShowOnboarding
+                    ? "Trips help you group places and share them with friends."
+                    : "Create your first trip above!"}
+                </p>
+              </div>
             ) : (
               <div className="space-y-3">
                 {trips.map((trip) => (

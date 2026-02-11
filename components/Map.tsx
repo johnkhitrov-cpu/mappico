@@ -5,6 +5,8 @@ import Map, { NavigationControl, Marker } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { getAuthHeaders } from "@/lib/clientAuth";
 import { useGlobalToast } from "./ClientLayout";
+import { useOnboarding } from "@/lib/useOnboarding";
+import { useAnalytics } from "@/lib/analytics";
 
 interface Point {
   id: string;
@@ -51,6 +53,8 @@ type SelectedPoint = (Point & { isMine: true }) | (FriendPoint & { isMine: false
 
 export default function MapComponent() {
   const { success, error: showError } = useGlobalToast();
+  const { shouldShowOnboarding, markOnboardingComplete } = useOnboarding();
+  const { trackEvent } = useAnalytics();
 
   const [viewState, setViewState] = useState({
     longitude: 15.0,
@@ -313,6 +317,12 @@ export default function MapComponent() {
       // Add new point to state
       setMyPoints([data.point, ...myPoints]);
 
+      // Track point creation
+      trackEvent('create_point', {
+        has_photo: !!photoUrl,
+        has_trip: !!selectedTripId
+      });
+
       // If trip selected, attach point to trip
       if (selectedTripId) {
         try {
@@ -331,8 +341,14 @@ export default function MapComponent() {
             // Point created but trip attach failed
             showError("Point created, but could not be added to trip");
           } else {
+            const tripData = await tripResponse.json();
             // Both succeeded
             success("Point created and added to trip!");
+
+            // Track point attachment to trip
+            trackEvent('attach_point_to_trip', {
+              trip_visibility: tripData.trip?.visibility || 'unknown'
+            });
           }
         } catch (tripErr) {
           // Point created but trip attach failed
@@ -342,6 +358,9 @@ export default function MapComponent() {
         // No trip selected
         success("Point created successfully!");
       }
+
+      // Mark onboarding complete
+      markOnboardingComplete();
 
       // Close modal
       setClickedCoords(null);
@@ -544,8 +563,14 @@ export default function MapComponent() {
       {/* Empty state overlay */}
       {!loading && !hasVisiblePoints && (
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 bg-white/90 backdrop-blur-sm px-8 py-6 rounded-lg shadow-lg text-center max-w-md">
-          <p className="text-lg text-gray-700 mb-2">No points yet</p>
-          <p className="text-sm text-gray-500">Click on the map to add your first point</p>
+          <p className="text-lg text-gray-700 mb-2">
+            {shouldShowOnboarding ? "Welcome to your map!" : "No points yet"}
+          </p>
+          <p className="text-sm text-gray-500">
+            {shouldShowOnboarding
+              ? "Click anywhere on the map to add a place. You can attach it to a trip while creating the point."
+              : "Click on the map to add your first point"}
+          </p>
         </div>
       )}
 
