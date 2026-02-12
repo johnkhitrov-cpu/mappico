@@ -1,44 +1,39 @@
-import posthog from 'posthog-js';
 import type { AnalyticsEvent } from './types';
 
+// Yandex Metrika global type
+declare global {
+  interface Window {
+    ym?: (counterId: number, method: string, ...args: any[]) => void;
+  }
+}
+
 let isInitialized = false;
+const METRIKA_ID = 106790199;
 
 export function initAnalytics() {
   if (isInitialized || typeof window === 'undefined') return;
 
-  const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
-  const host = process.env.NEXT_PUBLIC_POSTHOG_HOST;
-
-  if (!key || !host) {
-    console.warn('Analytics disabled: Missing PostHog configuration');
-    return;
-  }
-
-  posthog.init(key, {
-    api_host: host,
-    person_profiles: 'always',
-    capture_pageview: false,  // Manual tracking only
-    capture_pageleave: false,
-    autocapture: false,         // No automatic click tracking
-    disable_session_recording: true,
-    loaded: (posthog) => {
-      if (process.env.NODE_ENV === 'development') {
-        posthog.opt_out_capturing(); // Disable in dev
-      }
+  // Wait for ym to be available (loaded by Script in layout)
+  const checkYm = () => {
+    if (window.ym) {
+      isInitialized = true;
+    } else {
+      setTimeout(checkYm, 100);
     }
-  });
+  };
 
-  isInitialized = true;
+  checkYm();
 }
 
 export function trackEvent<T extends AnalyticsEvent>(
   name: T['name'],
   properties: T['properties']
 ) {
-  if (!isInitialized || typeof window === 'undefined') return;
+  if (!isInitialized || typeof window === 'undefined' || !window.ym) return;
 
   try {
-    posthog.capture(name, properties);
+    // Yandex Metrika custom event: reachGoal
+    window.ym(METRIKA_ID, 'reachGoal', name, properties);
   } catch (error) {
     console.error('Analytics tracking error:', error);
     // Fail silently - never break user experience
@@ -46,10 +41,11 @@ export function trackEvent<T extends AnalyticsEvent>(
 }
 
 export function identifyUser(userId: string) {
-  if (!isInitialized || typeof window === 'undefined') return;
+  if (!isInitialized || typeof window === 'undefined' || !window.ym) return;
 
   try {
-    posthog.identify(userId);
+    // Yandex Metrika user parameters
+    window.ym(METRIKA_ID, 'userParams', { UserID: userId });
   } catch (error) {
     console.error('Analytics identify error:', error);
   }
