@@ -41,6 +41,7 @@ model Point {
   title       String
   description String?
   photoUrl    String?
+  address     String?
   category    PointCategory @default(PLACE)
   createdAt   DateTime      @default(now())
 

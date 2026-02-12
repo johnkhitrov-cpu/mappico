@@ -18,3 +18,32 @@
     animation: slide-in 0.3s ease-out;
   }
 }
+
+/* Add Point popup: override Mapbox defaults */
+.add-point-popup .mapboxgl-popup-content {
+  padding: 14px;
+  border-radius: 14px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+  width: max-content;
+}
+
+.add-point-popup .mapboxgl-popup-content * {
+  box-sizing: border-box;
+}
+
+.add-point-popup .mapboxgl-popup-close-button {
+  top: 8px;
+  right: 8px;
+  font-size: 20px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  z-index: 10;
+}
+
+.add-point-popup .mapboxgl-popup-close-button:hover {
+  background-color: rgba(0, 0, 0, 0.06);
+}

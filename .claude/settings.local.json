@@ -45,7 +45,9 @@
       "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJ0ZXN0LXVzZXIiLCJlbWFpbCI6InRlc3RAdGVzdC5jb20iLCJpYXQiOjE3NzA4MTU5MjMsImV4cCI6MTc3MDgxOTUyM30.gLvMtR5WAPBjQlmCoPOKdmUlKKa4q8DUD-Izf27oasA\")",
       "Bash(python3:*)",
       "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJ0ZXN0LXVzZXIiLCJlbWFpbCI6InRlc3RAdGVzdC5jb20iLCJpYXQiOjE3NzA4MTYwMDAsImV4cCI6MTc3MDgxOTYwMH0.ooCQqwgD5ZQ-E8q0TkGL9Zs2kO1av7U_CshfEkc_kjE\")",
-      "Bash(xargs -I{} curl -s http://localhost:3000/api/trips -H \"Authorization: Bearer {}\")"
+      "Bash(xargs -I{} curl -s http://localhost:3000/api/trips -H \"Authorization: Bearer {}\")",
+      "Bash(grep:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

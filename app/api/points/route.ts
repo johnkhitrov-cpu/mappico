@@ -26,6 +26,7 @@ export async function GET(request: NextRequest) {
         title: true,
         description: true,
         photoUrl: true,
+        address: true,
         category: true,
         createdAt: true,
       },
@@ -100,6 +101,7 @@ export async function POST(request: NextRequest) {
         title: validatedData.title,
         description: validatedData.description || null,
         photoUrl: validatedData.photoUrl || null,
+        address: validatedData.address || null,
         category: validatedData.category,
       },
       select: {
@@ -109,6 +111,7 @@ export async function POST(request: NextRequest) {
         title: true,
         description: true,
         photoUrl: true,
+        address: true,
         category: true,
         createdAt: true,
         user: {
@@ -162,6 +165,7 @@ export async function POST(request: NextRequest) {
             title: point.title,
             description: point.description,
             photoUrl: point.photoUrl,
+            address: point.address,
             category: point.category,
             createdAt: point.createdAt.toISOString(),
           },

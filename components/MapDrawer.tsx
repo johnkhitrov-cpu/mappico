@@ -9,6 +9,7 @@ interface Point {
   title: string;
   description: string | null;
   photoUrl: string | null;
+  address: string | null;
   category: 'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER';
   createdAt: string;
 }

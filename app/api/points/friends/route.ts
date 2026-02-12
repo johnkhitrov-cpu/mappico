@@ -58,6 +58,7 @@ export async function GET(request: NextRequest) {
         title: true,
         description: true,
         photoUrl: true,
+        address: true,
         category: true,
         createdAt: true,
         user: {
@@ -78,6 +79,7 @@ export async function GET(request: NextRequest) {
       title: point.title,
       description: point.description,
       photoUrl: point.photoUrl,
+      address: point.address,
       category: point.category,
       createdAt: point.createdAt.toISOString(),
     }));

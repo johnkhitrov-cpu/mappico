@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import Map, { NavigationControl, Marker } from "react-map-gl/mapbox";
+import { useState, useEffect, useRef } from "react";
+import Map, { NavigationControl, Marker, MapRef } from "react-map-gl/mapbox";
+import mapboxgl from "mapbox-gl";
+import { createRoot } from "react-dom/client";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { getAuthHeaders } from "@/lib/clientAuth";
 import { useGlobalToast } from "./ClientLayout";
@@ -11,6 +13,7 @@ import FriendsDrawer from './FriendsDrawer';
 import MapDrawer from './MapDrawer';
 import TripsDrawer from './TripsDrawer';
 import ProfileModal from './ProfileModal';
+import AddPointPopupForm from './AddPointPopupForm';
 
 interface Point {
   id: string;
@@ -19,6 +22,7 @@ interface Point {
   title: string;
   description: string | null;
   photoUrl: string | null;
+  address: string | null;
   category: 'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER';
   createdAt: string;
 }
@@ -32,6 +36,7 @@ interface FriendPoint {
   title: string;
   description: string | null;
   photoUrl: string | null;
+  address: string | null;
   category: 'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER';
   createdAt: string;
 }
@@ -178,6 +183,11 @@ export default function MapComponent() {
   // Geolocation state
   const [locatingUser, setLocatingUser] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+
+  // Map and popup refs
+  const mapRef = useRef<MapRef | null>(null);
+  const popupRef = useRef<mapboxgl.Popup | null>(null);
+  const popupRootRef = useRef<any>(null);
 
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
@@ -373,7 +383,201 @@ export default function MapComponent() {
     fetchTripPointIds();
   }, [activeTripId]);
 
+  // Desktop detection using media query
+  const isDesktop = () => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(pointer: fine)').matches;
+  };
+
+  // Cleanup popup on unmount
+  useEffect(() => {
+    return () => {
+      if (popupRef.current) {
+        popupRef.current.remove();
+        popupRef.current = null;
+      }
+      if (popupRootRef.current) {
+        popupRootRef.current.unmount();
+        popupRootRef.current = null;
+      }
+    };
+  }, []);
+
+  // Pan map so popup stays fully visible inside viewport
+  const fitPopupIntoViewport = (targetMap: mapboxgl.Map, targetPopup: mapboxgl.Popup, padding = 16) => {
+    const popupEl = targetPopup.getElement();
+    if (!popupEl) return;
+    const popupRect = popupEl.getBoundingClientRect();
+    const containerRect = targetMap.getContainer().getBoundingClientRect();
+    let dx = 0;
+    let dy = 0;
+    if (popupRect.left < containerRect.left + padding)
+      dx = containerRect.left + padding - popupRect.left;
+    if (popupRect.right > containerRect.right - padding)
+      dx = -(popupRect.right - containerRect.right + padding);
+    if (popupRect.top < containerRect.top + padding)
+      dy = containerRect.top + padding - popupRect.top;
+    if (popupRect.bottom > containerRect.bottom - padding)
+      dy = -(popupRect.bottom - containerRect.bottom + padding);
+    if (dx !== 0 || dy !== 0) {
+      targetMap.panBy([-dx, -dy], { duration: 300 });
+    }
+  };
+
+  const handleContextMenu = (event: mapboxgl.MapMouseEvent) => {
+    // Only on desktop (pointer: fine) use right-click
+    if (!isDesktop()) return;
+
+    event.preventDefault();
+
+    const { lngLat, point } = event;
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+
+    // Close existing popup
+    if (popupRef.current) {
+      popupRef.current.remove();
+      popupRef.current = null;
+    }
+    if (popupRootRef.current) {
+      popupRootRef.current.unmount();
+      popupRootRef.current = null;
+    }
+
+    // Smart anchor: pick side with most free space
+    const container = map.getContainer();
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    const nearTop = point.y < h * 0.35;
+    const nearBottom = point.y > h * 0.65;
+    const nearLeft = point.x < w * 0.35;
+    const nearRight = point.x > w * 0.65;
+
+    let anchor: mapboxgl.Anchor = 'bottom';
+    if (nearTop && nearLeft) anchor = 'top-left';
+    else if (nearTop && nearRight) anchor = 'top-right';
+    else if (nearTop) anchor = 'top';
+    else if (nearBottom && nearLeft) anchor = 'bottom-left';
+    else if (nearBottom && nearRight) anchor = 'bottom-right';
+    else if (nearBottom) anchor = 'bottom';
+    else if (nearLeft) anchor = 'left';
+    else if (nearRight) anchor = 'right';
+
+    // Create popup container
+    const popupContainer = document.createElement('div');
+
+    // Create popup
+    const popup = new mapboxgl.Popup({
+      closeOnClick: false,
+      closeButton: true,
+      offset: 14,
+      anchor,
+      className: 'add-point-popup',
+      maxWidth: 'none',
+    })
+      .setLngLat([lngLat.lng, lngLat.lat])
+      .setDOMContent(popupContainer)
+      .addTo(map);
+
+    // Fit popup into viewport after it renders
+    requestAnimationFrame(() => fitPopupIntoViewport(map, popup));
+
+    popupRef.current = popup;
+
+    // Mount React component into popup
+    const root = createRoot(popupContainer);
+    popupRootRef.current = root;
+
+    const handleSuccess = (point: Point) => {
+      // Add point to state
+      setMyPoints([point, ...myPoints]);
+      success('Point created successfully!');
+
+      // Close popup
+      if (popupRef.current) {
+        popupRef.current.remove();
+        popupRef.current = null;
+      }
+      if (popupRootRef.current) {
+        popupRootRef.current.unmount();
+        popupRootRef.current = null;
+      }
+    };
+
+    const handleCancel = () => {
+      if (popupRef.current) {
+        popupRef.current.remove();
+        popupRef.current = null;
+      }
+      if (popupRootRef.current) {
+        popupRootRef.current.unmount();
+        popupRootRef.current = null;
+      }
+    };
+
+    // Track last flyTo target to prevent duplicate flights
+    let lastFlyToKey = '';
+
+    const handleCoordsChange = (newLng: number, newLat: number) => {
+      const flyToKey = `${newLng.toFixed(6)},${newLat.toFixed(6)}`;
+      if (flyToKey === lastFlyToKey) return;
+      lastFlyToKey = flyToKey;
+
+      const currentMap = mapRef.current?.getMap();
+      const currentPopup = popupRef.current;
+
+      if (currentPopup) {
+        currentPopup.setLngLat([newLng, newLat]);
+      }
+
+      if (currentMap) {
+        currentMap.flyTo({
+          center: [newLng, newLat],
+          zoom: Math.max(currentMap.getZoom(), 12),
+          duration: 700,
+          essential: true,
+        });
+
+        // After flyTo completes, re-anchor popup and fit into viewport once
+        const onMoveEnd = () => {
+          currentMap.off('moveend', onMoveEnd);
+          if (currentPopup) {
+            currentPopup.setLngLat([newLng, newLat]);
+            requestAnimationFrame(() => {
+              if (currentPopup && currentMap) {
+                fitPopupIntoViewport(currentMap, currentPopup);
+              }
+            });
+          }
+        };
+        currentMap.on('moveend', onMoveEnd);
+      }
+    };
+
+    root.render(
+      <AddPointPopupForm
+        lat={lngLat.lat}
+        lng={lngLat.lng}
+        trips={trips}
+        tripsLoading={tripsLoading}
+        onSuccess={handleSuccess}
+        onCancel={handleCancel}
+        onError={showError}
+        trackEvent={trackEvent}
+        markOnboardingComplete={markOnboardingComplete}
+        onCoordsChange={handleCoordsChange}
+      />
+    );
+
+    // Clear selected point
+    setSelectedPoint(null);
+  };
+
+  // Mobile fallback: left-click to show old-style modal
   const handleMapClick = (event: any) => {
+    // Only on mobile (pointer: coarse) use left-click
+    if (isDesktop()) return;
+
     const { lngLat } = event;
     setClickedCoords({ lat: lngLat.lat, lng: lngLat.lng });
     setTitle("");
@@ -949,9 +1153,16 @@ export default function MapComponent() {
       )}
 
       <Map
+        ref={mapRef}
         {...viewState}
         onMove={(evt) => setViewState(evt.viewState)}
         onClick={handleMapClick}
+        onLoad={() => {
+          const map = mapRef.current?.getMap();
+          if (map) {
+            map.on('contextmenu', handleContextMenu);
+          }
+        }}
         mapboxAccessToken={mapboxToken}
         style={{ width: "100%", height: "100%" }}
         mapStyle="mapbox://styles/mapbox/streets-v12"
@@ -1499,7 +1710,7 @@ export default function MapComponent() {
         myPoints={myPoints}
         onPointClick={(point) => {
           setViewState({ longitude: point.lng, latitude: point.lat, zoom: 14 });
-          setSelectedPoint({ ...point, isMine: true });
+          setSelectedPoint({ ...point, address: point.address || null, isMine: true });
         }}
       />
 

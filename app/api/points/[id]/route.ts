@@ -176,7 +176,7 @@ export async function PATCH(
     const validatedData = pointUpdateSchema.parse(body);
 
     // Validate at least one field is present
-    if (!validatedData.title && !validatedData.description && !validatedData.category && !validatedData.photoUrl && !validatedData.removePhoto) {
+    if (!validatedData.title && validatedData.description === undefined && validatedData.address === undefined && !validatedData.category && !validatedData.photoUrl && !validatedData.removePhoto) {
       return NextResponse.json(
         { error: 'At least one field must be provided' },
         { status: 400 }
@@ -251,6 +251,7 @@ export async function PATCH(
       data: {
         ...(validatedData.title && { title: validatedData.title }),
         ...(validatedData.description !== undefined && { description: validatedData.description }),
+        ...(validatedData.address !== undefined && { address: validatedData.address }),
         ...(validatedData.category && { category: validatedData.category }),
         ...photoUpdate,
       },
@@ -261,6 +262,7 @@ export async function PATCH(
         title: true,
         description: true,
         photoUrl: true,
+        address: true,
         category: true,
         createdAt: true,
         user: {
@@ -310,6 +312,7 @@ export async function PATCH(
             title: updatedPoint.title,
             description: updatedPoint.description,
             photoUrl: updatedPoint.photoUrl,
+            address: updatedPoint.address,
             category: updatedPoint.category,
             createdAt: updatedPoint.createdAt.toISOString(),
           },
