@@ -31,7 +31,22 @@
   box-sizing: border-box;
 }
 
-.add-point-popup .mapboxgl-popup-close-button {
+/* Point info popup: override Mapbox defaults */
+.point-info-popup .mapboxgl-popup-content {
+  padding: 0;
+  border-radius: 14px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+  width: max-content;
+  overflow: hidden;
+}
+
+.point-info-popup .mapboxgl-popup-content * {
+  box-sizing: border-box;
+}
+
+/* Custom popup close button (replaces Mapbox default) */
+.mp-popup-close-btn {
+  position: absolute;
   top: 8px;
   right: 8px;
   font-size: 20px;
@@ -42,8 +57,65 @@
   justify-content: center;
   border-radius: 50%;
   z-index: 10;
+  background: rgba(255, 255, 255, 0.85);
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+  color: #374151;
+  padding: 0;
 }
 
-.add-point-popup .mapboxgl-popup-close-button:hover {
-  background-color: rgba(0, 0, 0, 0.06);
+.mp-popup-close-btn:hover {
+  background-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Popup open/close animation */
+.mp-popup-anim {
+  position: relative;
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+  transition: opacity 180ms cubic-bezier(0.16, 1, 0.3, 1),
+              transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.mp-popup-anim--open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.mp-popup-anim--closing {
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+  transition-timing-function: ease-in;
+  transition-duration: 150ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-popup-anim {
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .mp-popup-anim--closing {
+    transition: none !important;
+  }
+}
+
+/* Ghost pin pulse after address selection */
+.mp-ghost-pin {
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  border: 2px solid rgba(17, 24, 39, 0.85);
+  background: rgba(59, 130, 246, 0.25);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  animation: mpGhostPulse 600ms ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes mpGhostPulse {
+  0%   { opacity: 0.9; transform: scale(1.15); }
+  60%  { opacity: 0.55; transform: scale(1.0); }
+  100% { opacity: 0; transform: scale(0.85); }
 }

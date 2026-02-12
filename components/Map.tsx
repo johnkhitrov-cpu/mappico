@@ -14,6 +14,7 @@ import MapDrawer from './MapDrawer';
 import TripsDrawer from './TripsDrawer';
 import ProfileModal from './ProfileModal';
 import AddPointPopupForm from './AddPointPopupForm';
+import PointInfoPopupCard from './PointInfoPopupCard';
 
 interface Point {
   id: string;
@@ -60,8 +61,6 @@ interface ClickedCoords {
   lat: number;
   lng: number;
 }
-
-type SelectedPoint = (Point & { isMine: true }) | (FriendPoint & { isMine: false });
 
 interface IncomingRequest {
   id: string;
@@ -138,22 +137,7 @@ export default function MapComponent() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [fileValidationError, setFileValidationError] = useState("");
-  const [selectedPoint, setSelectedPoint] = useState<SelectedPoint | null>(null);
   const [category, setCategory] = useState<'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER'>('PLACE');
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState("");
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-
-  // Edit state
-  const [isEditing, setIsEditing] = useState(false);
-  const [editTitle, setEditTitle] = useState("");
-  const [editDescription, setEditDescription] = useState("");
-  const [editCategory, setEditCategory] = useState<'PLACE' | 'FOOD' | 'STAY' | 'ACTIVITY' | 'OTHER'>('PLACE');
-  const [updating, setUpdating] = useState(false);
-  const [updateError, setUpdateError] = useState("");
-  const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
-  const [editPhotoPreview, setEditPhotoPreview] = useState<string | null>(null);
-  const [editRemovePhoto, setEditRemovePhoto] = useState(false);
 
   // Filter state
   const [showMyPoints, setShowMyPoints] = useState(true);
@@ -188,6 +172,14 @@ export default function MapComponent() {
   const mapRef = useRef<MapRef | null>(null);
   const popupRef = useRef<mapboxgl.Popup | null>(null);
   const popupRootRef = useRef<any>(null);
+  const pointPopupRef = useRef<mapboxgl.Popup | null>(null);
+  const pointPopupRootRef = useRef<any>(null);
+  const pointPopupWrapperRef = useRef<HTMLDivElement | null>(null);
+  const addPointPopupWrapperRef = useRef<HTMLDivElement | null>(null);
+  const pointPopupCleanupRef = useRef<(() => void) | null>(null);
+  const ghostMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const ghostTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const markerClickTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
@@ -389,28 +381,45 @@ export default function MapComponent() {
     return window.matchMedia('(pointer: fine)').matches;
   };
 
-  // Cleanup popup on unmount
+  // Get deep zoom level clamped by map maxZoom
+  const getDeepZoom = (map: mapboxgl.Map) => {
+    const desired = 18.5;
+    const max = map.getMaxZoom?.() ?? 22;
+    return Math.min(desired, max);
+  };
+
+  // Cleanup popups and ghost marker on unmount (immediate, no animation)
   useEffect(() => {
     return () => {
-      if (popupRef.current) {
-        popupRef.current.remove();
-        popupRef.current = null;
-      }
-      if (popupRootRef.current) {
-        popupRootRef.current.unmount();
-        popupRootRef.current = null;
-      }
+      if (popupRef.current) { try { popupRef.current.remove(); } catch {} popupRef.current = null; }
+      if (popupRootRef.current) { try { popupRootRef.current.unmount(); } catch {} popupRootRef.current = null; }
+      addPointPopupWrapperRef.current = null;
+      if (pointPopupRef.current) { try { pointPopupRef.current.remove(); } catch {} pointPopupRef.current = null; }
+      if (pointPopupRootRef.current) { try { pointPopupRootRef.current.unmount(); } catch {} pointPopupRootRef.current = null; }
+      pointPopupWrapperRef.current = null;
+      if (pointPopupCleanupRef.current) { pointPopupCleanupRef.current(); pointPopupCleanupRef.current = null; }
+      if (ghostMarkerRef.current) { ghostMarkerRef.current.remove(); ghostMarkerRef.current = null; }
+      if (ghostTimerRef.current) { clearTimeout(ghostTimerRef.current); ghostTimerRef.current = null; }
+      if (markerClickTimerRef.current) { clearTimeout(markerClickTimerRef.current); markerClickTimerRef.current = null; }
     };
   }, []);
 
-  // Pan map so popup stays fully visible inside viewport
-  const fitPopupIntoViewport = (targetMap: mapboxgl.Map, targetPopup: mapboxgl.Popup, padding = 16) => {
+  // Pan map so popup stays fully visible inside viewport and marker remains uncovered
+  const fitPopupAndKeepMarkerVisible = (
+    targetMap: mapboxgl.Map,
+    targetPopup: mapboxgl.Popup,
+    markerLngLat: [number, number],
+    padding = 16,
+  ) => {
     const popupEl = targetPopup.getElement();
     if (!popupEl) return;
     const popupRect = popupEl.getBoundingClientRect();
     const containerRect = targetMap.getContainer().getBoundingClientRect();
+
     let dx = 0;
     let dy = 0;
+
+    // 1) Viewport fit
     if (popupRect.left < containerRect.left + padding)
       dx = containerRect.left + padding - popupRect.left;
     if (popupRect.right > containerRect.right - padding)
@@ -419,9 +428,219 @@ export default function MapComponent() {
       dy = containerRect.top + padding - popupRect.top;
     if (popupRect.bottom > containerRect.bottom - padding)
       dy = -(popupRect.bottom - containerRect.bottom + padding);
+
+    // 2) Keep marker visible (anti-overlap)
+    const markerScreen = targetMap.project(markerLngLat);
+    const markerR = 18; // marker visual radius in pixels
+    const markerScreenRect = {
+      left: containerRect.left + markerScreen.x - markerR,
+      right: containerRect.left + markerScreen.x + markerR,
+      top: containerRect.top + markerScreen.y - markerR,
+      bottom: containerRect.top + markerScreen.y + markerR,
+    };
+
+    // After applying dx/dy, where would the popup be?
+    const adjPopup = {
+      left: popupRect.left + dx,
+      right: popupRect.right + dx,
+      top: popupRect.top + dy,
+      bottom: popupRect.bottom + dy,
+    };
+
+    // Check if adjusted popup still overlaps marker
+    const overlapsH = adjPopup.left < markerScreenRect.right && adjPopup.right > markerScreenRect.left;
+    const overlapsV = adjPopup.top < markerScreenRect.bottom && adjPopup.bottom > markerScreenRect.top;
+
+    if (overlapsH && overlapsV) {
+      // Nudge vertically so marker peeks out (prefer pushing popup up)
+      const nudge = 50;
+      if (adjPopup.bottom > markerScreenRect.top && adjPopup.top < markerScreenRect.top) {
+        // popup covers marker from above — shift map down (dy negative = map shifts up = popup shifts up)
+        dy -= nudge;
+      } else {
+        dy += nudge;
+      }
+    }
+
     if (dx !== 0 || dy !== 0) {
       targetMap.panBy([-dx, -dy], { duration: 300 });
     }
+  };
+
+  // Animate popup close, then remove DOM
+  const animatedClose = (
+    popup: mapboxgl.Popup | null,
+    root: any,
+    wrapper: HTMLDivElement | null,
+  ) => {
+    if (!popup) return;
+
+    if (!wrapper) {
+      try { root?.unmount(); } catch {}
+      try { popup.remove(); } catch {}
+      return;
+    }
+
+    wrapper.classList.remove('mp-popup-anim--open');
+    wrapper.classList.add('mp-popup-anim--closing');
+
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const duration = reducedMotion ? 0 : 150;
+
+    setTimeout(() => {
+      try { root?.unmount(); } catch {}
+      try { popup.remove(); } catch {}
+    }, duration);
+  };
+
+  // Close point info popup with animation
+  const closePointPopup = () => {
+    const popup = pointPopupRef.current;
+    const root = pointPopupRootRef.current;
+    const wrapper = pointPopupWrapperRef.current;
+
+    // Clear refs immediately so a new popup can be created
+    pointPopupRef.current = null;
+    pointPopupRootRef.current = null;
+    pointPopupWrapperRef.current = null;
+
+    // Clean up map click listener
+    if (pointPopupCleanupRef.current) {
+      pointPopupCleanupRef.current();
+      pointPopupCleanupRef.current = null;
+    }
+
+    animatedClose(popup, root, wrapper);
+  };
+
+  // Close add-point popup with animation
+  const closeAddPointPopup = () => {
+    const popup = popupRef.current;
+    const root = popupRootRef.current;
+    const wrapper = addPointPopupWrapperRef.current;
+
+    popupRef.current = null;
+    popupRootRef.current = null;
+    addPointPopupWrapperRef.current = null;
+
+    animatedClose(popup, root, wrapper);
+  };
+
+  // Open point info popup anchored to a marker
+  const openPointPopup = (point: Point | FriendPoint, isMine: boolean) => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+
+    // Close any existing popups
+    closePointPopup();
+    closeAddPointPopup();
+
+    // Create wrapper with animation class
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mp-popup-anim';
+
+    // Custom close button
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'mp-popup-close-btn';
+    closeBtn.innerHTML = '\u00d7';
+    closeBtn.onclick = () => closePointPopup();
+    wrapper.appendChild(closeBtn);
+
+    // React mount target
+    const container = document.createElement('div');
+    wrapper.appendChild(container);
+
+    const popup = new mapboxgl.Popup({
+      closeOnClick: false,
+      closeButton: false,
+      offset: 14,
+      className: 'point-info-popup',
+      maxWidth: 'none',
+    })
+      .setLngLat([point.lng, point.lat])
+      .setDOMContent(wrapper)
+      .addTo(map);
+
+    pointPopupRef.current = popup;
+    pointPopupWrapperRef.current = wrapper;
+
+    // Close on map background click
+    const onMapClick = () => closePointPopup();
+    map.on('click', onMapClick);
+    pointPopupCleanupRef.current = () => map.off('click', onMapClick);
+
+    const root = createRoot(container);
+    pointPopupRootRef.current = root;
+
+    const renderCard = (p: Point | FriendPoint, mine: boolean) => {
+      const selectedPoint = mine
+        ? { ...(p as Point), isMine: true as const }
+        : { ...(p as FriendPoint), isMine: false as const };
+
+      root.render(
+        <PointInfoPopupCard
+          point={selectedPoint}
+          onClose={() => closePointPopup()}
+          onPointDeleted={(id) => {
+            setMyPoints(prev => prev.filter(pt => pt.id !== id));
+            closePointPopup();
+          }}
+          onPointUpdated={(updated) => {
+            setMyPoints(prev => prev.map(pt => pt.id === updated.id ? updated : pt));
+            renderCard(updated, true);
+          }}
+          showSuccess={success}
+          showError={showError}
+        />
+      );
+    };
+
+    renderCard(point, isMine);
+
+    // Trigger open animation + auto-pan after layout
+    requestAnimationFrame(() => {
+      wrapper.classList.add('mp-popup-anim--open');
+      requestAnimationFrame(() => {
+        if (popup && map) {
+          fitPopupAndKeepMarkerVisible(map, popup, [point.lng, point.lat]);
+        }
+      });
+    });
+  };
+
+  // Debounced marker click: delays popup open to distinguish from double-click
+  const handleMarkerClick = (point: Point | FriendPoint, isMine: boolean, e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    if (markerClickTimerRef.current) {
+      clearTimeout(markerClickTimerRef.current);
+    }
+
+    markerClickTimerRef.current = setTimeout(() => {
+      markerClickTimerRef.current = null;
+      openPointPopup(point, isMine);
+    }, 250);
+  };
+
+  // Handle double-click on marker: deep zoom only (no popup)
+  const handleMarkerDblClick = (point: Point | FriendPoint, _isMine: boolean, e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    // Cancel any pending single-click popup
+    if (markerClickTimerRef.current) {
+      clearTimeout(markerClickTimerRef.current);
+      markerClickTimerRef.current = null;
+    }
+
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+
+    map.easeTo({
+      center: [point.lng, point.lat],
+      zoom: getDeepZoom(map),
+      duration: 700,
+      essential: true,
+    });
   };
 
   const handleContextMenu = (event: mapboxgl.MapMouseEvent) => {
@@ -434,15 +653,9 @@ export default function MapComponent() {
     const map = mapRef.current?.getMap();
     if (!map) return;
 
-    // Close existing popup
-    if (popupRef.current) {
-      popupRef.current.remove();
-      popupRef.current = null;
-    }
-    if (popupRootRef.current) {
-      popupRootRef.current.unmount();
-      popupRootRef.current = null;
-    }
+    // Close existing popups
+    closePointPopup();
+    closeAddPointPopup();
 
     // Smart anchor: pick side with most free space
     const container = map.getContainer();
@@ -463,56 +676,57 @@ export default function MapComponent() {
     else if (nearLeft) anchor = 'left';
     else if (nearRight) anchor = 'right';
 
-    // Create popup container
+    // Create wrapper with animation class
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mp-popup-anim';
+
+    // Custom close button
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'mp-popup-close-btn';
+    closeBtn.innerHTML = '\u00d7';
+    closeBtn.onclick = () => closeAddPointPopup();
+    wrapper.appendChild(closeBtn);
+
+    // React mount target
     const popupContainer = document.createElement('div');
+    wrapper.appendChild(popupContainer);
 
     // Create popup
     const popup = new mapboxgl.Popup({
       closeOnClick: false,
-      closeButton: true,
+      closeButton: false,
       offset: 14,
       anchor,
       className: 'add-point-popup',
       maxWidth: 'none',
     })
       .setLngLat([lngLat.lng, lngLat.lat])
-      .setDOMContent(popupContainer)
+      .setDOMContent(wrapper)
       .addTo(map);
 
-    // Fit popup into viewport after it renders
-    requestAnimationFrame(() => fitPopupIntoViewport(map, popup));
-
     popupRef.current = popup;
+    addPointPopupWrapperRef.current = wrapper;
+
+    // Trigger open animation + auto-pan after layout
+    requestAnimationFrame(() => {
+      wrapper.classList.add('mp-popup-anim--open');
+      requestAnimationFrame(() => {
+        fitPopupAndKeepMarkerVisible(map, popup, [lngLat.lng, lngLat.lat]);
+      });
+    });
 
     // Mount React component into popup
     const root = createRoot(popupContainer);
     popupRootRef.current = root;
 
     const handleSuccess = (point: Point) => {
-      // Add point to state
       setMyPoints([point, ...myPoints]);
       success('Point created successfully!');
-
-      // Close popup
-      if (popupRef.current) {
-        popupRef.current.remove();
-        popupRef.current = null;
-      }
-      if (popupRootRef.current) {
-        popupRootRef.current.unmount();
-        popupRootRef.current = null;
-      }
+      closeAddPointPopup();
     };
 
     const handleCancel = () => {
-      if (popupRef.current) {
-        popupRef.current.remove();
-        popupRef.current = null;
-      }
-      if (popupRootRef.current) {
-        popupRootRef.current.unmount();
-        popupRootRef.current = null;
-      }
+      closeAddPointPopup();
     };
 
     // Track last flyTo target to prevent duplicate flights
@@ -530,10 +744,36 @@ export default function MapComponent() {
         currentPopup.setLngLat([newLng, newLat]);
       }
 
+      // Show ghost pin at the new location
       if (currentMap) {
+        // Clean up previous ghost pin
+        if (ghostMarkerRef.current) {
+          ghostMarkerRef.current.remove();
+          ghostMarkerRef.current = null;
+        }
+        if (ghostTimerRef.current) {
+          clearTimeout(ghostTimerRef.current);
+          ghostTimerRef.current = null;
+        }
+
+        const ghostEl = document.createElement('div');
+        ghostEl.className = 'mp-ghost-pin';
+        const ghostMarker = new mapboxgl.Marker({ element: ghostEl, anchor: 'center' })
+          .setLngLat([newLng, newLat])
+          .addTo(currentMap);
+        ghostMarkerRef.current = ghostMarker;
+
+        ghostTimerRef.current = setTimeout(() => {
+          if (ghostMarkerRef.current === ghostMarker) {
+            ghostMarker.remove();
+            ghostMarkerRef.current = null;
+          }
+          ghostTimerRef.current = null;
+        }, 600);
+
         currentMap.flyTo({
           center: [newLng, newLat],
-          zoom: Math.max(currentMap.getZoom(), 12),
+          zoom: getDeepZoom(currentMap),
           duration: 700,
           essential: true,
         });
@@ -544,9 +784,11 @@ export default function MapComponent() {
           if (currentPopup) {
             currentPopup.setLngLat([newLng, newLat]);
             requestAnimationFrame(() => {
-              if (currentPopup && currentMap) {
-                fitPopupIntoViewport(currentMap, currentPopup);
-              }
+              requestAnimationFrame(() => {
+                if (currentPopup && currentMap) {
+                  fitPopupAndKeepMarkerVisible(currentMap, currentPopup, [newLng, newLat]);
+                }
+              });
             });
           }
         };
@@ -569,8 +811,6 @@ export default function MapComponent() {
       />
     );
 
-    // Clear selected point
-    setSelectedPoint(null);
   };
 
   // Mobile fallback: left-click to show old-style modal
@@ -588,7 +828,6 @@ export default function MapComponent() {
     setSelectedFile(null);
     setPreviewUrl(null);
     setFileValidationError("");
-    setSelectedPoint(null);
   };
 
   const handleSavePoint = async () => {
@@ -791,176 +1030,6 @@ export default function MapComponent() {
     setFileValidationError("");
   };
 
-  const handleDeletePoint = async () => {
-    if (!selectedPoint || !selectedPoint.isMine) return;
-
-    setDeleting(true);
-    setDeleteError("");
-
-    try {
-      const response = await fetch(`/api/points/${selectedPoint.id}`, {
-        method: "DELETE",
-        headers: getAuthHeaders(),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        showError(data.error || "Failed to delete point");
-        throw new Error(data.error || "Failed to delete point");
-      }
-
-      // Remove point from state
-      setMyPoints((prev) => prev.filter((p) => p.id !== selectedPoint.id));
-
-      // Close popup and confirmation dialog
-      setSelectedPoint(null);
-      setShowDeleteConfirm(false);
-
-      // Show success toast
-      success("Point deleted successfully");
-      console.log("Point deleted successfully:", selectedPoint.id);
-    } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : "Failed to delete point");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleEditClick = () => {
-    if (!selectedPoint || !selectedPoint.isMine) return;
-
-    setEditTitle(selectedPoint.title);
-    setEditDescription(selectedPoint.description || "");
-    setEditCategory(selectedPoint.category);
-    setEditPhotoFile(null);
-    setEditPhotoPreview(null);
-    setEditRemovePhoto(false);
-    setIsEditing(true);
-    setUpdateError("");
-  };
-
-  const handleCancelEdit = () => {
-    if (editPhotoPreview) URL.revokeObjectURL(editPhotoPreview);
-    setEditPhotoFile(null);
-    setEditPhotoPreview(null);
-    setEditRemovePhoto(false);
-    setIsEditing(false);
-    setUpdateError("");
-  };
-
-  const handleEditPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const MAX_FILE_SIZE = 20 * 1024 * 1024;
-    const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-
-    if (file.size > MAX_FILE_SIZE) {
-      setUpdateError("File size exceeds 20MB limit");
-      e.target.value = "";
-      return;
-    }
-    if (!ALLOWED_TYPES.includes(file.type)) {
-      setUpdateError("Only JPG, PNG, and WEBP images are allowed");
-      e.target.value = "";
-      return;
-    }
-
-    if (editPhotoPreview) URL.revokeObjectURL(editPhotoPreview);
-    setEditPhotoFile(file);
-    setEditPhotoPreview(URL.createObjectURL(file));
-    setEditRemovePhoto(false);
-    setUpdateError("");
-  };
-
-  const handleSaveEdit = async () => {
-    if (!selectedPoint || !selectedPoint.isMine) return;
-
-    if (!editTitle.trim()) {
-      setUpdateError("Title is required");
-      return;
-    }
-
-    setUpdating(true);
-    setUpdateError("");
-
-    try {
-      let newPhotoUrl: string | undefined;
-
-      // Upload new photo if selected
-      if (editPhotoFile) {
-        const formData = new FormData();
-        formData.append("file", editPhotoFile);
-        formData.append("upload_preset", process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!);
-        formData.append("folder", "mappico");
-
-        const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
-        const uploadResponse = await fetch(
-          `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-          { method: "POST", body: formData }
-        );
-
-        if (!uploadResponse.ok) {
-          throw new Error("Failed to upload image");
-        }
-
-        const uploadData = await uploadResponse.json();
-        newPhotoUrl = uploadData.secure_url;
-      }
-
-      const body: Record<string, unknown> = {
-        title: editTitle,
-        description: editDescription || undefined,
-        category: editCategory,
-      };
-
-      if (editRemovePhoto) {
-        body.removePhoto = true;
-      } else if (newPhotoUrl) {
-        body.photoUrl = newPhotoUrl;
-      }
-
-      const response = await fetch(`/api/points/${selectedPoint.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeaders(),
-        },
-        body: JSON.stringify(body),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to update point");
-      }
-
-      // Cleanup preview
-      if (editPhotoPreview) URL.revokeObjectURL(editPhotoPreview);
-      setEditPhotoFile(null);
-      setEditPhotoPreview(null);
-      setEditRemovePhoto(false);
-
-      // Update local state
-      setMyPoints(prev =>
-        prev.map(p => p.id === selectedPoint.id ? data.point : p)
-      );
-
-      // Update selected point
-      setSelectedPoint({ ...data.point, isMine: true });
-
-      // Exit edit mode
-      setIsEditing(false);
-
-      success("Point updated successfully!");
-    } catch (err: any) {
-      setUpdateError(err.message);
-      showError(err.message);
-    } finally {
-      setUpdating(false);
-    }
-  };
 
   const handleMyLocation = () => {
     if (!navigator.geolocation) {
@@ -1216,10 +1285,8 @@ export default function MapComponent() {
             <div
               className={`${getCategoryColor(point.category)} rounded-full w-9 h-9 flex items-center justify-center text-white text-lg shadow-lg cursor-pointer hover:scale-110 transition-transform ring-2 ring-white`}
               title={point.title}
-              onClick={(e) => {
-                e.stopPropagation();
-                setSelectedPoint({ ...point, isMine: true });
-              }}
+              onClick={(e) => handleMarkerClick(point, true, e)}
+              onDoubleClick={(e) => handleMarkerDblClick(point, true, e)}
             >
               {getCategoryEmoji(point.category)}
             </div>
@@ -1237,10 +1304,8 @@ export default function MapComponent() {
             <div
               className={`${getCategoryColor(point.category)} rounded-full w-9 h-9 flex items-center justify-center text-white text-lg shadow-lg cursor-pointer hover:scale-110 transition-transform ring-2 ring-white opacity-80`}
               title={`${point.title} (by ${point.userEmail})`}
-              onClick={(e) => {
-                e.stopPropagation();
-                setSelectedPoint({ ...point, isMine: false });
-              }}
+              onClick={(e) => handleMarkerClick(point, false, e)}
+              onDoubleClick={(e) => handleMarkerDblClick(point, false, e)}
             >
               {getCategoryEmoji(point.category)}
             </div>
@@ -1427,263 +1492,6 @@ export default function MapComponent() {
         </div>
       )}
 
-      {/* Point details popup */}
-      {selectedPoint && (
-        <div className="absolute top-4 left-4 right-4 md:top-4 md:right-4 md:left-auto bg-white rounded-lg shadow-xl p-4 md:w-80 z-20 max-h-[calc(100vh-2rem)] overflow-y-auto">
-          <div className="flex justify-between items-start mb-3">
-            <h3 className="text-lg font-bold text-gray-900">
-              {isEditing ? "Edit Point" : selectedPoint.title}
-            </h3>
-            <button
-              onClick={() => {
-                setSelectedPoint(null);
-                setIsEditing(false);
-                setShowDeleteConfirm(false);
-                setDeleteError("");
-              }}
-              className="text-gray-400 hover:text-gray-600 text-xl leading-none"
-            >
-              ×
-            </button>
-          </div>
-
-          {/* Show author for friend points (not in edit mode) */}
-          {!selectedPoint.isMine && !isEditing && (
-            <div className="mb-3">
-              <p className="text-xs text-gray-500">
-                by: <span className="font-medium text-gray-700">{selectedPoint.userEmail}</span>
-              </p>
-            </div>
-          )}
-
-          {/* EDIT MODE */}
-          {isEditing ? (
-            <div className="space-y-3">
-              {updateError && (
-                <div className="bg-red-50 p-2 rounded-md">
-                  <p className="text-sm text-red-600">{updateError}</p>
-                </div>
-              )}
-
-              {/* Title Input */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Title <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  maxLength={80}
-                  disabled={updating}
-                  className="w-full px-4 py-3 h-12 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
-                />
-              </div>
-
-              {/* Description Textarea */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Description
-                </label>
-                <textarea
-                  value={editDescription}
-                  onChange={(e) => setEditDescription(e.target.value)}
-                  maxLength={500}
-                  rows={3}
-                  disabled={updating}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
-                />
-              </div>
-
-              {/* Category Select */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Category
-                </label>
-                <select
-                  value={editCategory}
-                  onChange={(e) => setEditCategory(e.target.value as any)}
-                  disabled={updating}
-                  className="w-full px-4 py-3 h-12 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
-                >
-                  <option value="PLACE">📍 Interesting place</option>
-                  <option value="FOOD">🍜 Food</option>
-                  <option value="STAY">🏨 Stay</option>
-                  <option value="ACTIVITY">🎟️ Activity</option>
-                  <option value="OTHER">✨ Other</option>
-                </select>
-              </div>
-
-              {/* Photo section */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Photo
-                </label>
-
-                {/* Current / preview photo */}
-                {editPhotoPreview ? (
-                  <div className="relative mb-2 w-full max-h-[160px] overflow-hidden rounded-xl bg-slate-100">
-                    <img src={editPhotoPreview} alt="New photo" className="h-full w-full object-cover block" />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        URL.revokeObjectURL(editPhotoPreview);
-                        setEditPhotoFile(null);
-                        setEditPhotoPreview(null);
-                      }}
-                      disabled={updating}
-                      className="absolute top-2 right-2 bg-red-600 text-white rounded-full w-7 h-7 flex items-center justify-center hover:bg-red-700 shadow-lg text-sm"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : !editRemovePhoto && selectedPoint.photoUrl ? (
-                  <div className="relative mb-2 w-full max-h-[160px] overflow-hidden rounded-xl bg-slate-100">
-                    <img src={selectedPoint.photoUrl} alt="Current" className="h-full w-full object-cover block" />
-                  </div>
-                ) : null}
-
-                <div className="flex gap-2">
-                  <label className="flex-1">
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      onChange={handleEditPhotoChange}
-                      disabled={updating}
-                      className="hidden"
-                    />
-                    <div className="w-full px-3 py-2 border border-gray-300 rounded-xl text-gray-700 bg-white hover:bg-gray-50 cursor-pointer flex items-center justify-center font-medium text-sm transition-colors">
-                      {editPhotoFile ? editPhotoFile.name : "Upload photo"}
-                    </div>
-                  </label>
-                  {(selectedPoint.photoUrl && !editRemovePhoto && !editPhotoFile) && (
-                    <button
-                      type="button"
-                      onClick={() => setEditRemovePhoto(true)}
-                      disabled={updating}
-                      className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-xl border border-red-200 font-medium transition-colors"
-                    >
-                      Remove
-                    </button>
-                  )}
-                  {editRemovePhoto && (
-                    <button
-                      type="button"
-                      onClick={() => setEditRemovePhoto(false)}
-                      disabled={updating}
-                      className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-xl border border-gray-300 font-medium transition-colors"
-                    >
-                      Undo
-                    </button>
-                  )}
-                </div>
-                {editRemovePhoto && (
-                  <p className="text-xs text-red-500 mt-1">Photo will be removed on save.</p>
-                )}
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex gap-2 pt-2">
-                <button
-                  onClick={handleSaveEdit}
-                  disabled={updating || !editTitle.trim()}
-                  className="flex-1 bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 disabled:bg-slate-400 disabled:cursor-not-allowed font-medium text-sm"
-                >
-                  {updating ? "Saving..." : "Save Changes"}
-                </button>
-                <button
-                  onClick={handleCancelEdit}
-                  disabled={updating}
-                  className="flex-1 bg-white text-gray-700 px-4 py-2 rounded-md border border-gray-300 hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium text-sm"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            /* VIEW MODE */
-            <>
-              {selectedPoint.photoUrl && (
-                <div className="mb-3 w-full max-h-[220px] overflow-hidden rounded-xl bg-slate-100">
-                  <img
-                    src={selectedPoint.photoUrl}
-                    alt={selectedPoint.title}
-                    className="h-full w-full object-cover block"
-                  />
-                </div>
-              )}
-
-              {selectedPoint.description && (
-                <div className="mb-3">
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">
-                    {selectedPoint.description}
-                  </p>
-                </div>
-              )}
-
-              <div className="text-xs text-gray-500 mb-3">
-                {new Date(selectedPoint.createdAt).toLocaleDateString()}
-              </div>
-
-              {/* Edit + Delete buttons - only for owned points */}
-              {selectedPoint.isMine && !showDeleteConfirm && (
-                <div className="space-y-2">
-                  <button
-                    onClick={handleEditClick}
-                    className="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 font-medium text-sm"
-                  >
-                    Edit Point
-                  </button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(true)}
-                    disabled={deleting}
-                    className="w-full bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium text-sm"
-                  >
-                    Delete Point
-                  </button>
-                </div>
-              )}
-
-              {/* Delete confirmation */}
-              {selectedPoint.isMine && showDeleteConfirm && (
-                <div className="border-t pt-3">
-                  <p className="text-sm text-gray-700 mb-3">
-                    Are you sure you want to delete this point?
-                    {selectedPoint.photoUrl && " The photo will also be deleted from Cloudinary."}
-                  </p>
-
-                  {deleteError && (
-                    <div className="mb-3 bg-red-50 p-2 rounded">
-                      <p className="text-sm text-red-600">{deleteError}</p>
-                    </div>
-                  )}
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleDeletePoint}
-                      disabled={deleting}
-                      className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed font-medium text-sm"
-                    >
-                      {deleting ? "Deleting..." : "Yes, Delete"}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowDeleteConfirm(false);
-                        setDeleteError("");
-                      }}
-                      disabled={deleting}
-                      className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium text-sm"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
       {/* Friends Drawer */}
       <FriendsDrawer
         isOpen={showFriendsDrawer}
@@ -1710,7 +1518,7 @@ export default function MapComponent() {
         myPoints={myPoints}
         onPointClick={(point) => {
           setViewState({ longitude: point.lng, latitude: point.lat, zoom: 14 });
-          setSelectedPoint({ ...point, address: point.address || null, isMine: true });
+          setTimeout(() => openPointPopup({ ...point, address: point.address || null }, true), 300);
         }}
       />
 
